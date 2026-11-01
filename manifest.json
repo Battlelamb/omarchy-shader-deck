@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "id": "leviathan.shader-deck",
+  "name": "Shader Deck",
+  "version": "0.1.0",
+  "author": "Ömer Eren",
+  "license": "GPL-3.0-only",
+  "description": "Select optional screen effects with timed revert and explicit restore.",
+  "kinds": [
+    "overlay"
+  ],
+  "keepLoaded": true,
+  "entryPoints": {
+    "overlay": "runtime/0.1.0/ShaderDeck.qml"
+  }
+}
