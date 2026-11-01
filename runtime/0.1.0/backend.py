@@ -171,7 +171,8 @@ def read_values():
         value = row.get(field)
         if kind == 'gap' and type(value) is str and re.fullmatch(r'\d+( \d+){3}', value):
             value = [int(x) for x in value.split()]
-
+        if kind == 'shader' and value == '[[EMPTY]]':
+            value = ''
         if not valid_value(key, value):
             raise ValueError('Unsupported stored compositor value; no mutation performed')
         result[key] = value
@@ -192,6 +193,8 @@ def lua_literal(value):
 def write_value(key, value, expected):
     if key not in SCHEMA or not valid_value(key, value):
         raise ValueError('Rejected unsupported compositor mutation')
+    if SCHEMA[key] == 'shader' and value == '[[EMPTY]]':
+        value = ''
     guards = []
     for name, old in expected.items():
         guards.append('local v=hl.get_config(' + lua_literal(name) + ');')
@@ -268,6 +271,9 @@ def load_state(directory, instance):
         values = record.get(field)
         if type(values) is not dict or set(values) != set(SCHEMA) or any(not valid_value(k, v) for k, v in values.items()):
             raise ValueError('Invalid snapshot values')
+        for key in values:
+            if SCHEMA[key] == 'shader' and values[key] == '[[EMPTY]]':
+                values[key] = ''
     if 'token' in record:
         import math
         if (not re.fullmatch('[a-f0-9]{32}', str(record['token']))

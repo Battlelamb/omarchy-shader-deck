@@ -193,17 +193,216 @@ class BackendTests(unittest.TestCase):
         self.assertIn('unavailable', result['message'])
         self.assertEqual(self.values(), self.original)
 
+    def test_disable_accepts_empty_transport_readback_and_restores_path(self):
+        import json
+        code, result = self.cli('action', '--id', 'disable', '--verb', 'apply', '--apply')
+        self.assertEqual(code, 0, result)
+        self.assertEqual(self.values()['decoration.screen_shader'], '')
+        path = next((self.home / 'state').rglob('transaction.json'))
+        record = json.loads(path.read_text())
+        self.assertEqual(record['expected'], {'decoration.screen_shader': ''})
+        self.assertFalse({'token', 'deadline', 'watchdog_pid'} & record.keys())
+        code, result = self.cli('action', '--id', 'restore:last', '--verb', 'restore', '--apply')
+        self.assertEqual(code, 0, result)
+        self.assertEqual(self.values(), self.original)
+        self.assertFalse(path.exists())
+
     def test_empty_sentinel_and_literal_previous_shader_restore_exactly(self):
         import json
-        for previous in ['[[EMPTY]]', '', '/old/a \"quote\"; os.execute(\"bad\"); ü.frag']:
-            with self.subTest(previous=previous):
+        for previous, sentinel in [('', True), ('', False), ('/old/a \"quote\"; os.execute(\"bad\"); ü.frag', False)]:
+            with self.subTest(previous=previous, sentinel=sentinel):
+                marker = self.home / 'empty-getoption-sentinel'
+                marker.touch() if sentinel else marker.unlink(missing_ok=True)
+                (self.home / 'assignments.jsonl').unlink(missing_ok=True)
                 self.original['decoration.screen_shader'] = previous
                 (self.home / 'compositor.json').write_text(json.dumps(self.original))
                 code, result = self.cli('action', '--id', 'grayscale', '--verb', 'apply', '--apply')
                 self.assertEqual(code, 0, result)
+                path = next((self.home / 'state').rglob('transaction.json'))
+                before = json.loads(path.read_text())['before']
                 code, result = self.cli('action', '--id', 'disable', '--verb', 'restore', '--apply')
                 self.assertEqual(code, 0, result)
                 self.assertEqual(self.values(), self.original)
+                self.assertFalse(path.exists())
+                self.assertEqual(before, {'decoration.screen_shader': previous})
+                assigned = [json.loads(line)['value'] for line in (self.home / 'assignments.jsonl').read_text().splitlines()]
+                self.assertNotIn('[[EMPTY]]', assigned)
+
+    def legacy_empty_receipt(self, phase='active', current='', expected='[[EMPTY]]', previous='[[EMPTY]]'):
+        import hashlib, json
+        directory = self.home / 'state/omarchy-shader-deck' / hashlib.sha256(self.env['HYPRLAND_INSTANCE_SIGNATURE'].encode()).hexdigest()[:24]
+        directory.mkdir(parents=True, mode=0o700, exist_ok=True)
+        directory.parent.chmod(0o700)
+        path = directory / 'transaction.json'
+        record = {'instance': self.env['HYPRLAND_INSTANCE_SIGNATURE'], 'id': 'disable', 'phase': phase,
+                  'before': {'decoration.screen_shader': '[[EMPTY]]'},
+                  'previous': {'decoration.screen_shader': previous},
+                  'expected': {'decoration.screen_shader': expected}}
+        path.write_text(json.dumps(record))
+        state = dict(self.original, **{'decoration.screen_shader': current})
+        (self.home / 'compositor.json').write_text(json.dumps(state))
+        return path, record
+
+    def test_legacy_empty_receipt_fields_are_canonical_without_rewriting_file(self):
+        import json
+        path, record = self.legacy_empty_receipt()
+        original = path.read_bytes()
+        loaded = backend.load_state(path.parent, record['instance'])
+        for field in ['before', 'previous', 'expected']:
+            self.assertEqual(loaded[field], {'decoration.screen_shader': ''})
+        self.assertEqual(path.read_bytes(), original)
+        self.assertFalse((self.home / 'eval-count').exists())
+
+    def test_legacy_empty_restore_never_assigns_sentinel_as_shader_path(self):
+        import json
+        for phase, current, expected, previous in [
+                ('active', '/old/confirmed.frag', '/old/confirmed.frag', '/old/confirmed.frag'),
+                ('active', '', '[[EMPTY]]', '[[EMPTY]]'),
+                ('pending', '', '/old/trial.frag', '[[EMPTY]]'),
+                ('pending', '/old/trial.frag', '/old/trial.frag', '[[EMPTY]]')]:
+            with self.subTest(phase=phase, current=current):
+                path, record = self.legacy_empty_receipt(phase, current, expected, previous)
+                (self.home / 'assignments.jsonl').unlink(missing_ok=True)
+                code, result = self.cli('action', '--id', 'restore:last', '--verb', 'restore', '--apply')
+                assigned = self.home / 'assignments.jsonl'
+                values = [json.loads(line)['value'] for line in assigned.read_text().splitlines()] if assigned.exists() else []
+                self.assertNotIn('[[EMPTY]]', values, 'transport sentinel crossed hl.config instead of canonical empty')
+                self.assertEqual(code, 0, result)
+                self.assertEqual(self.values(), dict(self.original, **{'decoration.screen_shader': ''}))
+                self.assertFalse(path.exists())
+
+    def test_empty_sentinel_setter_uses_empty_lua_assignment(self):
+        import json, os
+        from unittest.mock import patch
+        self.original['decoration.screen_shader'] = ''
+        (self.home / 'compositor.json').write_text(json.dumps(self.original))
+        with patch.dict(os.environ, self.env, clear=True):
+            backend.write_value('decoration.screen_shader', '[[EMPTY]]', {'decoration.screen_shader': '[[EMPTY]]'})
+        self.assertEqual(self.values(), self.original)
+        assignments = [json.loads(line) for line in (self.home / 'assignments.jsonl').read_text().splitlines()]
+        self.assertEqual(assignments, [{'key': 'decoration.screen_shader', 'value': ''}])
+
+    def test_empty_baseline_rollback_after_real_lua_mutation(self):
+        import json
+        self.original['decoration.screen_shader'] = ''
+        (self.home / 'compositor.json').write_text(json.dumps(self.original))
+        (self.home / 'empty-getoption-sentinel').touch()
+        code, result = self.cli('action', '--id', 'warm', '--verb', 'apply', '--apply',
+                                extra={'FIXTURE_FAIL_AT': '1', 'FIXTURE_FAIL_AFTER': '1'})
+        self.assertNotEqual(code, 0)
+        self.assertIn('rollback confirmed', result['message'])
+        self.assertEqual(self.values(), self.original)
+        self.assertFalse(list((self.home / 'state').rglob('transaction.json')))
+        assigned = [json.loads(line)['value'] for line in (self.home / 'assignments.jsonl').read_text().splitlines()]
+        self.assertTrue(assigned[0].endswith('/warm.frag'))
+        self.assertEqual(assigned[1:], [''])
+
+    def test_empty_baseline_detached_watchdog_restores_canonical_value(self):
+        import json, os
+        from unittest.mock import patch
+        self.original['decoration.screen_shader'] = ''
+        (self.home / 'compositor.json').write_text(json.dumps(self.original))
+        (self.home / 'empty-getoption-sentinel').touch()
+        with patch.dict(os.environ, self.env, clear=True), patch.object(backend, 'TRIAL_SECONDS', 0.5):
+            self.assertTrue(backend.action('warm', 'apply')['ok'])
+        path = next((self.home / 'state').rglob('transaction.json'))
+        self.assertEqual(json.loads(path.read_text())['before'], {'decoration.screen_shader': ''})
+        self.assert_timed_recovery(path)
+        assigned = [json.loads(line)['value'] for line in (self.home / 'assignments.jsonl').read_text().splitlines()]
+        self.assertEqual(assigned[-1], '')
+        self.assertNotIn('[[EMPTY]]', assigned)
+
+    def test_legacy_empty_timed_receipt_recovers_without_changing_authority(self):
+        import json, os, time
+        from unittest.mock import patch
+        self.original['decoration.screen_shader'] = ''
+        path, record = self.legacy_empty_receipt(current='/old/trial.frag', expected='/old/trial.frag', previous='/old/trial.frag')
+        with patch.dict(os.environ, self.env, clear=True), patch.object(backend, 'TRIAL_SECONDS', 0.5):
+            with backend.locked(path.parent):
+                backend.start_watchdog(path.parent, record)
+        saved = json.loads(path.read_text())
+        self.assertEqual(saved['before'], {'decoration.screen_shader': '[[EMPTY]]'})
+        self.assertEqual(saved['token'], record['token'])
+        self.assertEqual(saved['deadline'], record['deadline'])
+        self.assert_timed_recovery(path)
+        assigned = [json.loads(line)['value'] for line in (self.home / 'assignments.jsonl').read_text().splitlines()]
+        self.assertEqual(assigned, [''])
+
+    def test_legacy_empty_receipt_still_refuses_divergent_external_edit(self):
+        for phase in ['active', 'pending']:
+            with self.subTest(phase=phase):
+                path, record = self.legacy_empty_receipt(phase=phase, current='/external.frag')
+                receipt, before = path.read_bytes(), self.values()
+                code, result = self.cli('action', '--id', 'restore:last', '--verb', 'restore', '--apply')
+                self.assertNotEqual(code, 0)
+                self.assertIn('conflict', result['message'].lower())
+                self.assertEqual(path.read_bytes(), receipt)
+                self.assertEqual(self.values(), before)
+                self.assertFalse((self.home / 'eval-count').exists())
+
+    def test_legacy_empty_normalization_does_not_bypass_receipt_validation(self):
+        import copy, json
+        path, record = self.legacy_empty_receipt()
+        invalid = []
+        for field in ['before', 'previous', 'expected']:
+            for bad in ['[[EMPTY]] ', 'relative.frag', None, 0, [], '/bad\nfile']:
+                changed = copy.deepcopy(record)
+                changed[field]['decoration.screen_shader'] = bad
+                invalid.append(changed)
+        invalid += [dict(record, instance='foreign'), dict(record, phase='bad'), dict(record, token='bad')]
+        for changed in invalid:
+            with self.subTest(record=changed):
+                path.write_text(json.dumps(changed))
+                receipt = path.read_bytes()
+                code, result = self.cli('action', '--id', 'restore:last', '--verb', 'restore', '--apply')
+                self.assertNotEqual(code, 0)
+                self.assertEqual(path.read_bytes(), receipt)
+                self.assertFalse((self.home / 'eval-count').exists())
+        self.assertEqual(self.values()['decoration.screen_shader'], '')
+
+    def test_empty_sentinel_guard_still_refuses_lua_race(self):
+        import os
+        from unittest.mock import patch
+        before = self.values()
+        with patch.dict(os.environ, self.env, clear=True):
+            with self.assertRaisesRegex(ValueError, 'external edit'):
+                backend.write_value('decoration.screen_shader', '', {'decoration.screen_shader': '[[EMPTY]]'})
+        self.assertEqual(self.values(), before)
+        self.assertFalse((self.home / 'assignments.jsonl').exists())
+
+    def test_empty_transport_read_is_canonical_without_state_or_setter(self):
+        import json, os
+        from unittest.mock import patch
+        self.original['decoration.screen_shader'] = ''
+        (self.home / 'compositor.json').write_text(json.dumps(self.original))
+        (self.home / 'empty-getoption-sentinel').touch()
+        with patch.dict(os.environ, self.env, clear=True):
+            self.assertEqual(json.loads(backend.run_hypr('-j', 'getoption', 'decoration.screen_shader'))['str'], '[[EMPTY]]')
+            self.assertEqual(backend.read_values(), {'decoration.screen_shader': ''})
+        self.assertFalse((self.home / 'state').exists())
+        self.assertFalse((self.home / 'eval-count').exists())
+        self.assertEqual(self.values(), self.original)
+
+    def test_empty_readback_spelling_change_is_not_external_edit(self):
+        self.assertEqual(self.cli('action', '--id', 'disable', '--verb', 'apply', '--apply')[0], 0)
+        # Raw default sentinel versus explicit empty assignment, same Lua-visible value.
+        (self.home / 'empty-getoption-sentinel').touch()
+        code, result = self.cli('action', '--id', 'restore:last', '--verb', 'restore', '--apply')
+        self.assertEqual(code, 0, result)
+        self.assertEqual(self.values(), self.original)
+        self.assertFalse(list((self.home / 'state').rglob('transaction.json')))
+
+    def test_fixture_empty_setter_switches_transport_to_literal_empty(self):
+        import json, os
+        from unittest.mock import patch
+        self.original['decoration.screen_shader'] = ''
+        (self.home / 'compositor.json').write_text(json.dumps(self.original))
+        (self.home / 'empty-getoption-sentinel').touch()
+        with patch.dict(os.environ, self.env, clear=True):
+            backend.write_value('decoration.screen_shader', '', {'decoration.screen_shader': ''})
+            self.assertEqual(json.loads(backend.run_hypr('-j', 'getoption', 'decoration.screen_shader'))['str'], '')
+        self.assertEqual(self.values(), self.original)
+        self.assertFalse((self.home / 'empty-getoption-sentinel').exists())
 
     def test_default_watchdog_survives_killed_ui_process_group(self):
         import subprocess, json, time, os, signal

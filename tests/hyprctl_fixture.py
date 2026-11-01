@@ -54,6 +54,9 @@ elif args[:2] == ['-j', 'getoption']:
     elif type(value) is list:
         kind, value = 'css', ' '.join(map(str, value))
     else: kind = 'str'
+    # Model transport spelling independently from the actual Lua string value.
+    if key == 'decoration.screen_shader' and value == '' and (HOME / 'empty-getoption-sentinel').exists():
+        value = '[[EMPTY]]'
     print(json.dumps({'option': key, kind: value, 'set': True}))
 elif args and args[0] == 'eval':
     countfile = HOME / 'eval-count'
@@ -75,7 +78,7 @@ elif args and args[0] == 'eval':
         return json.dumps(value, ensure_ascii=False)
     source = 'local current={' + ','.join('['+json.dumps(k)+']='+literal(v) for k,v in state.items()) + '}\n'
     source += '''hl={}
-function hl.get_config(k) if current[k]=="[[EMPTY]]" then return "" end return current[k] end
+function hl.get_config(k) return current[k] end
 function hl.config(t)
  for k,v in pairs(t) do
   if type(v)=="table" then
@@ -92,7 +95,18 @@ end
     for line in p.stdout.splitlines():
         if line.startswith('SET\t'):
             _,key,value = line.split('\t',2)
-            state[key] = json.loads(value)
+            assigned = json.loads(value)
+            with (HOME / 'assignments.jsonl').open('a') as f:
+                f.write(json.dumps({'key': key, 'value': assigned}) + '\n')
+            state[key] = assigned
+            if key == 'decoration.screen_shader':
+                # C++ stores the raw spelling; Lua push/renderer treat the sentinel as empty.
+                marker = HOME / 'empty-getoption-sentinel'
+                if assigned == '[[EMPTY]]':
+                    state[key] = ''
+                    marker.touch()
+                else:
+                    marker.unlink(missing_ok=True)
     statefile.write_text(json.dumps(state))
     if os.environ.get('FIXTURE_KILL_CALLER'):
         import signal

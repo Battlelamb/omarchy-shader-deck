@@ -33,6 +33,39 @@ is invoked. Strings use escaped decimal UTF-8 bytes, not invalid Lua JSON `\u`
 escapes. Installed source and pinned matching C++ bindings were inspected before
 choosing these methods; exact hashes/receipts are in NOTICE.backend.md.
 
+## Empty shader representation (0.56.2)
+
+`getoption` exposes the raw `Config::STRING`: the default can be `[[EMPTY]]`,
+whereas an explicit empty Lua assignment is returned as `""`. The qualified
+`CLuaConfigString::push` converts the sentinel to `""` for `hl.get_config`.
+The renderer also explicitly treats **both** spellings as disabled before path
+resolution. A sentinel is therefore not evidence of a bogus GLSL file open,
+and the hypothesis that every Disable must fail readback was not reproduced
+with the source-faithful fixture. The demonstrated bug was leaking a transport
+spelling into snapshots/comparisons: a same-empty spelling change could falsely
+block Restore as an external edit.
+
+The backend uses `""` as the canonical disabled value for reads, new snapshots,
+and Lua assignment. All three value dictionaries in an old valid receipt
+(`before`, `previous`, `expected`) are normalized in memory after their schema
+validation; reading an old receipt does not rewrite it. Legacy active/pending
+receipts remain recoverable, including timed Restore. Only the exact sentinel
+for the shader key is normalized; malformed values, foreign sessions, invalid
+tokens and genuinely divergent external shader paths still fail closed. No
+journal, ownership, deadline, persistence or compare-before-write guard is bypassed.
+Nonempty shader paths retain their exact spelling and UTF-8 literal escaping.
+
+The fixture separates raw empty transport spelling from actual Lua `""`, switches
+to raw literal empty after an explicit empty setter, and records actual generated
+Lua assignments. Its earlier sentinel-as-underlying-value model was incorrect.
+Qualified source/header hashes, immutable RED/GREEN snapshots and logs,
+hash-matched original-backend controls, full-suite/package/diff receipts are in
+`release-output/live-empty-fix-1793565123473744123/`. Start with
+`api-evidence/interpretation.txt`, `red-qualified-source/`, and the final receipts;
+earlier sticky-sentinel runs are preserved but superseded, not compositor evidence.
+This investigation used the parent's supplied read-only observation, not a new
+live IPC capture. It ran no live setter, install, commit, or other-plugin edit.
+
 ## Transaction and recovery
 
 Per-plugin/per-instance files under
@@ -93,7 +126,7 @@ The fake `hyprctl` executes actual generated code with system Lua against a fake
 `hl` object and persists observable fake compositor state. It is logic/transport
 fixture evidence, not proof that a real C++ compositor or GPU accepted an effect.
 
-Current suite has **75 tests**. Added regressions cover active-save failure
+The earlier recovery suite had **75 tests**. Added regressions cover active-save failure
 before/after replacement, lost compensation acknowledgement, first/timed/confirmed
 previous state, explicit and actual timed recovery, failed pending-intent save
 with no compensation setters, and genuine external-edit refusal. Test-owned
