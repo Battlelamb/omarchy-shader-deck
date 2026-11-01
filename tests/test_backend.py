@@ -43,6 +43,83 @@ class BackendTests(unittest.TestCase):
         import json
         return json.loads((self.home / 'compositor.json').read_text())
 
+    def test_restore_alias_restores_receipt_not_selected_row(self):
+        row = backend.load_rows()[0]
+        code, result = self.cli('action', '--id', row['id'], '--verb', 'apply', '--apply')
+        self.assertEqual(code, 0, result)
+        self.assertNotEqual(self.values(), self.original)
+        code, result = self.cli('action', '--id', 'restore:last', '--verb', 'restore', '--apply')
+        self.assertEqual(code, 0, result)
+        self.assertTrue(result['ok'])
+        self.assertEqual(self.values(), self.original)
+        self.assertFalse(list((self.home / 'state').rglob('transaction.json')))
+
+    def test_restore_alias_without_receipt_cannot_claim_success(self):
+        code, result = self.cli('action', '--id', 'restore:last', '--verb', 'restore', '--apply')
+        self.assertNotEqual(code, 0)
+        self.assertIn('No snapshot', result['message'])
+        self.assertEqual(self.values(), self.original)
+        self.assertFalse((self.home / 'eval-count').exists())
+
+    def test_restore_alias_is_exact_explicit_restore_only(self):
+        for ident, verb, apply in [('restore:last', 'apply', True), ('restore:last', 'confirm', True),
+                                   ('restore:last ', 'restore', True), ('restore:LAST', 'restore', True),
+                                   ('restore:last', 'restore', False)]:
+            args = ['action', '--id', ident, '--verb', verb] + (['--apply'] if apply else [])
+            code, result = self.cli(*args)
+            self.assertNotEqual(code, 0)
+            self.assertFalse(result['ok'])
+        self.assertFalse((self.home / 'calls.jsonl').exists())
+        self.assertFalse((self.home / 'state').exists())
+        self.assertEqual(self.values(), self.original)
+
+    def test_restore_alias_preserves_external_edit_and_receipt(self):
+        import json
+        row = backend.load_rows()[0]
+        self.assertEqual(self.cli('action', '--id', row['id'], '--verb', 'apply', '--apply')[0], 0)
+        path = next((self.home / 'state').rglob('transaction.json'))
+        receipt = path.read_bytes()
+        count = (self.home / 'eval-count').read_bytes()
+        edited = self.values()
+        key = next(iter(row['settings']))
+        value = edited[key]
+        edited[key] = not value if type(value) is bool else (99 if type(value) is int else ([99]*4 if type(value) is list else '/external.frag'))
+        (self.home / 'compositor.json').write_text(json.dumps(edited))
+        code, result = self.cli('action', '--id', 'restore:last', '--verb', 'restore', '--apply')
+        self.assertNotEqual(code, 0)
+        self.assertIn('conflict', result['message'].lower())
+        self.assertEqual(self.values(), edited)
+        self.assertEqual(path.read_bytes(), receipt)
+        self.assertEqual((self.home / 'eval-count').read_bytes(), count)
+
+    def test_restore_alias_requires_valid_bounded_session_receipt(self):
+        import copy, json
+        row = backend.load_rows()[0]
+        self.assertEqual(self.cli('action', '--id', row['id'], '--verb', 'apply', '--apply')[0], 0)
+        path = next((self.home / 'state').rglob('transaction.json'))
+        good = json.loads(path.read_text())
+        invalid = []
+        missing_id = dict(good); del missing_id['id']; invalid.append(missing_id)
+        invalid.extend([dict(good, id=[]), dict(good, instance='foreign_session'), dict(good, phase='bad')])
+        bad_values = copy.deepcopy(good); bad_values['before']['exec'] = 'bad'; invalid.append(bad_values)
+        contents = [json.dumps(record).encode() for record in invalid] + [b' ' * 65537]
+        before, count = self.values(), (self.home / 'eval-count').read_bytes()
+        for content in contents:
+            with self.subTest(receipt=content[:80]):
+                path.write_bytes(content)
+                code, result = self.cli('action', '--id', 'restore:last', '--verb', 'restore', '--apply')
+                self.assertNotEqual(code, 0)
+                self.assertFalse(result['ok'])
+                self.assertEqual(path.read_bytes(), content)
+                self.assertEqual(self.values(), before)
+                self.assertEqual((self.home / 'eval-count').read_bytes(), count)
+        path.write_text(json.dumps(good))
+        moved = self.home / 'owned-receipt.json'; path.rename(moved); path.symlink_to(moved)
+        code, result = self.cli('action', '--id', 'restore:last', '--verb', 'restore', '--apply')
+        self.assertNotEqual(code, 0)
+        self.assertEqual(json.loads(moved.read_text()), good)
+        self.assertEqual(self.values(), before)
+
     def test_explicit_apply_then_restore_actual_values(self):
         row = backend.load_rows()[0]
         code, result = self.cli('action', '--id', row['id'], '--verb', 'apply', '--apply')
@@ -205,6 +282,86 @@ class BackendTests(unittest.TestCase):
         self.assertFalse(recordfile.exists())
         self.assertEqual(self.values(), self.original)
 
+    def test_slow_readiness_writer_does_not_publish_an_empty_record(self):
+        import os
+        from unittest.mock import patch
+        real_popen = backend.subprocess.Popen
+        children = []
+        def launch(argv, **kwargs):
+            if 'watchdog' in argv:
+                process = real_popen(['/usr/bin/python3', str(ROOT / 'tests/readiness_watchdog_fixture.py'), argv[-1]], **kwargs)
+                children.append(process)
+                return process
+            return real_popen(argv, **kwargs)
+        try:
+            with patch.dict(os.environ, self.env, clear=True), patch.object(backend.subprocess, 'Popen', launch):
+                self.assertTrue(backend.action('grayscale', 'apply')['ok'])
+                self.assertTrue(self.values()['decoration.screen_shader'].endswith('/grayscale.frag'))
+                self.assertTrue((self.home / 'readiness-paused').exists())
+                self.assertTrue(backend.action('grayscale', 'restore')['ok'])
+            self.assertEqual(self.values(), self.original)
+        finally:
+            for child in children:
+                child.wait(timeout=4)
+        self.assertFalse(list((self.home / 'state').rglob('.ready-*')))
+        self.assertFalse(list((self.home / 'state').rglob('.watchdog-*')))
+
+    def test_late_unpublished_watchdog_cleans_readiness_after_timeout(self):
+        import os
+        from unittest.mock import patch
+        real_popen = backend.subprocess.Popen
+        children = []
+        def launch(argv, **kwargs):
+            if 'watchdog' in argv:
+                process = real_popen(['/usr/bin/python3', str(ROOT / 'tests/readiness_watchdog_fixture.py'), argv[-1], '2.2'], **kwargs)
+                children.append(process)
+                return process
+            return real_popen(argv, **kwargs)
+        try:
+            with patch.dict(os.environ, self.env, clear=True), patch.object(backend.subprocess, 'Popen', launch):
+                with self.assertRaisesRegex(ValueError, 'rollback confirmed'):
+                    backend.action('grayscale', 'apply')
+            self.assertEqual(self.values(), self.original)
+            self.assertFalse((self.home / 'eval-count').exists())
+        finally:
+            for child in children:
+                child.wait(timeout=4)
+        self.assertFalse(list((self.home / 'state').rglob('.ready-*')))
+        self.assertFalse(list((self.home / 'state').rglob('.watchdog-*')))
+
+    def test_wrong_or_symlink_readiness_refuses_without_mutation(self):
+        import os
+        from unittest.mock import patch
+        real_popen = backend.subprocess.Popen
+        children = []
+        outside = self.home / 'not-readiness'; outside.write_text('999999')
+        def launch(argv, **kwargs):
+            if 'watchdog' in argv:
+                directory = next((self.home / 'state').rglob('transaction.json')).parent
+                ready = directory / ('.ready-' + argv[-1])
+                if kind == 'symlink':
+                    ready.symlink_to(outside)
+                else:
+                    ready.write_text('0')
+                process = real_popen(argv, **kwargs)
+                children.append(process)
+                return process
+            return real_popen(argv, **kwargs)
+        for kind in ['wrong-pid', 'symlink']:
+            with self.subTest(kind=kind):
+                try:
+                    with patch.dict(os.environ, self.env, clear=True), patch.object(backend.subprocess, 'Popen', launch):
+                        with self.assertRaisesRegex(ValueError, 'rollback confirmed'):
+                            backend.action('grayscale', 'apply')
+                    self.assertEqual(self.values(), self.original)
+                    self.assertFalse((self.home / 'eval-count').exists())
+                    self.assertEqual(outside.read_text(), '999999')
+                finally:
+                    for child in children:
+                        child.wait(timeout=4)
+                self.assertFalse(list((self.home / 'state').rglob('.ready-*')))
+                self.assertFalse(list((self.home / 'state').rglob('.watchdog-*')))
+
     def test_unavailable_watchdog_refuses_before_any_setter(self):
         import os, subprocess
         from unittest.mock import patch
@@ -322,6 +479,30 @@ class BackendTests(unittest.TestCase):
             gc.collect()
         self.assertFalse([w for w in seen if issubclass(w.category,ResourceWarning)])
         self.assertEqual(self.values(),self.original)
+
+    def test_restore_alias_failure_retains_trial_identity_and_original_deadline(self):
+        import json, os, time
+        from unittest.mock import patch
+        with patch.dict(os.environ, self.env, clear=True), patch.object(backend, 'TRIAL_SECONDS', 1.2):
+            backend.action('warm', 'apply')
+        path = next((self.home / 'state').rglob('transaction.json'))
+        original = json.loads(path.read_text())
+        (self.home / 'fail-next-setter').touch()
+        code, result = self.cli('action', '--id', 'restore:last', '--verb', 'restore', '--apply')
+        self.assertNotEqual(code, 0)
+        self.assertIn('retained', result['message'])
+        pending = json.loads(path.read_text())
+        self.assertEqual(pending['id'], 'warm')
+        self.assertEqual(pending['phase'], 'pending')
+        for field in ['token', 'deadline', 'watchdog_pid', 'before']:
+            self.assertEqual(pending[field], original[field])
+        self.assertTrue((self.home / 'ipc-outage').exists())
+        (self.home / 'ipc-outage').unlink()
+        limit = original['deadline'] + 3
+        while path.exists() and time.monotonic() < limit:
+            time.sleep(0.02)
+        self.assertFalse(path.exists(), 'alias replaced trial identity or lost timed recovery')
+        self.assertEqual(self.values(), self.original)
 
     def test_timed_restore_retries_ipc_loss_after_initial_read(self):
         import os, json, time
@@ -671,6 +852,246 @@ class BackendTests(unittest.TestCase):
                 backend.action(backend.load_rows()[0]['id'], 'apply')
         self.assertEqual(self.values(), self.original)
         self.assertFalse(list((self.home / 'state').rglob('transaction.json')))
+
+    def failed_active_publication(self, prior='timed', after_replace=True, row='warm', fail_intent=False):
+        import json, os
+        from unittest.mock import patch
+        with patch.dict(os.environ, self.env, clear=True), patch.object(backend, 'TRIAL_SECONDS', 1.2):
+            old = None
+            if prior:
+                backend.action('grayscale', 'apply')
+                if prior == 'confirmed':
+                    backend.action('grayscale', 'confirm')
+                old = json.loads(next((self.home / 'state').rglob('transaction.json')).read_text())
+            previous = {k: self.values()[k] for k in backend.SCHEMA}
+            real_save, real_write = backend.save, backend.write_value
+            compensating, intents, writes = [False], [], []
+            def save(directory, record):
+                if record['phase'] == 'active' and not compensating[0]:
+                    compensating[0] = True
+                    if after_replace:
+                        real_save(directory, record)
+                    raise OSError('active publication failed')
+                if compensating[0] and fail_intent:
+                    raise OSError('cannot persist compensation intent')
+                return real_save(directory, record)
+            def write(key, value, expected):
+                writes.append((key, value))
+                if compensating[0]:
+                    intents.append(json.loads(next((self.home / 'state').rglob('transaction.json')).read_text()))
+                result = real_write(key, value, expected)
+                if compensating[0]:
+                    raise ValueError('compensation applied but acknowledgment lost')
+                return result
+            with patch.object(backend, 'save', save), patch.object(backend, 'write_value', write):
+                with self.assertRaisesRegex(ValueError, 'retained'):
+                    backend.action(row, 'apply')
+        path = next((self.home / 'state').rglob('transaction.json'))
+        return path, old, previous, intents, writes
+
+    def assert_timed_recovery(self, path):
+        import json, time
+        record = json.loads(path.read_text())
+        self.assertIn('deadline', record, 'compensation retired independent watchdog authority')
+        limit = record['deadline'] + 3
+        while path.exists() and time.monotonic() < limit:
+            time.sleep(0.02)
+        self.assertFalse(path.exists(), 'watchdog lost compensation ownership: ' + repr(record))
+        self.assertEqual(self.values(), self.original)
+
+    def test_active_replace_lost_compensation_ack_explicit_restore_from_confirmed(self):
+        import json
+        path, old, previous, intents, writes = self.failed_active_publication(prior='confirmed')
+        code, result = self.cli('action', '--id', 'restore:last', '--verb', 'restore', '--apply')
+        self.assertEqual(code, 0, result)
+        self.assertEqual(self.values(), self.original)
+        self.assertFalse(path.exists())
+        self.assertEqual(len(intents), 1)
+        self.assertEqual(intents[0]['phase'], 'pending')
+        self.assertEqual(intents[0]['previous'], previous)
+        self.assertEqual(intents[0]['before'], {k: self.original[k] for k in backend.SCHEMA})
+        self.assertNotIn('token', old)
+
+    def test_active_replace_lost_compensation_ack_timed_restore(self):
+        import json
+        path, old, previous, intents, writes = self.failed_active_publication()
+        record = json.loads(path.read_text())
+        self.assert_timed_recovery(path)
+        self.assertEqual(record['phase'], 'pending')
+        self.assertEqual(record['previous'], previous)
+        for field in ['token', 'deadline', 'watchdog_pid']:
+            self.assertEqual(record[field], intents[0][field])
+        self.assertNotEqual(record['token'], old['token'])
+
+    def test_active_before_replace_lost_compensation_ack_timed_restore(self):
+        path, old, previous, intents, writes = self.failed_active_publication(after_replace=False)
+        self.assert_timed_recovery(path)
+        self.assertEqual(intents[0]['phase'], 'pending')
+        self.assertEqual(intents[0]['previous'], previous)
+
+    def test_active_replace_lost_compensation_ack_first_trial_timed_restore(self):
+        path, old, previous, intents, writes = self.failed_active_publication(prior=None)
+        self.assert_timed_recovery(path)
+        self.assertEqual(intents[0]['phase'], 'pending')
+        self.assertEqual(intents[0]['previous'], previous)
+
+    def test_failed_compensation_intent_save_prevents_compensating_setters(self):
+        import json
+        path, old, previous, intents, writes = self.failed_active_publication(fail_intent=True)
+        self.assertEqual(len(writes), 1, 'compensation ran without durable pending intent')
+        self.assertFalse(intents)
+        record = json.loads(path.read_text())
+        self.assertEqual(record['phase'], 'active')
+        self.assertEqual({k: self.values()[k] for k in backend.SCHEMA}, record['expected'])
+        self.assert_timed_recovery(path)
+
+    def test_failed_disable_publication_keeps_owner_during_lost_compensation_ack(self):
+        import json
+        path, old, previous, intents, writes = self.failed_active_publication(row='disable')
+        record = json.loads(path.read_text())
+        self.assert_timed_recovery(path)
+        for field in ['token', 'deadline', 'watchdog_pid']:
+            self.assertEqual(record[field], old[field])
+            self.assertEqual(intents[0][field], old[field])
+        self.assertEqual(record['phase'], 'pending')
+        self.assertEqual(record['previous'], previous)
+
+    def test_compensation_pending_journal_still_refuses_true_external_edit(self):
+        import json, time
+        path, old, previous, intents, writes = self.failed_active_publication()
+        record, receipt = json.loads(path.read_text()), path.read_bytes()
+        owned = self.values()
+        edited = dict(owned, **{'decoration.screen_shader': '/external-owned.frag'})
+        (self.home / 'compositor.json').write_text(json.dumps(edited))
+        count = (self.home / 'eval-count').read_bytes()
+        time.sleep(max(0, record['deadline'] + 1.2 - time.monotonic()))
+        self.assertEqual(self.values(), edited)
+        self.assertEqual(path.read_bytes(), receipt)
+        self.assertEqual((self.home / 'eval-count').read_bytes(), count)
+        code, result = self.cli('action', '--id', 'restore:last', '--verb', 'restore', '--apply')
+        self.assertNotEqual(code, 0)
+        self.assertIn('conflict', result['message'].lower())
+        self.assertEqual(self.values(), edited)
+        self.assertEqual(path.read_bytes(), receipt)
+        (self.home / 'compositor.json').write_text(json.dumps(owned))
+        self.assertEqual(self.cli('action', '--id', 'restore:last', '--verb', 'restore', '--apply')[0], 0)
+        self.assertEqual(self.values(), self.original)
+
+    def interrupted_compensation(self, stage, publication, operation):
+        import json, os, signal, subprocess, time
+        marker = self.home / 'compensation-paused.json'
+        marker.unlink(missing_ok=True)
+        caller = subprocess.Popen(['/usr/bin/python3', str(ROOT / 'tests/compensation_caller_fixture.py'),
+                                   stage, publication, operation], env=self.env,
+                                  stdout=subprocess.PIPE, stderr=subprocess.PIPE, start_new_session=True)
+        try:
+            limit = time.monotonic() + 5
+            while not marker.exists() and caller.poll() is None and time.monotonic() < limit:
+                time.sleep(0.01)
+            self.assertTrue(marker.exists(), 'caller never reached compensation boundary')
+            evidence = json.loads(marker.read_text())
+            self.assertEqual((evidence['pid'], evidence['pgid']), (caller.pid, caller.pid))
+            os.killpg(caller.pid, signal.SIGKILL)
+            out, err = caller.communicate(timeout=2)
+            self.assertEqual(caller.returncode, -signal.SIGKILL)
+            self.assertEqual((out, err), (b'', b''))
+            path = next((self.home / 'state').rglob('transaction.json'))
+            record = json.loads(path.read_text())
+            self.assert_timed_recovery(path)
+            self.assertEqual(record, evidence['journal'])
+            self.assertEqual(record['phase'], 'pending')
+            self.assertEqual(record['previous'], evidence['original']['expected'])
+            self.assertEqual(record['before'], {k: self.original[k] for k in backend.SCHEMA})
+            for field in ['token', 'deadline', 'watchdog_pid']:
+                self.assertEqual(record[field], evidence['owner'][field])
+                if operation != 'switch':
+                    self.assertEqual(record[field], evidence['original'][field])
+            if operation == 'switch':
+                self.assertNotEqual(record['token'], evidence['original']['token'])
+            if stage == 'rearm':
+                self.assertEqual(evidence['candidate']['deadline'], evidence['original']['deadline'])
+                self.assertNotEqual(evidence['candidate']['token'], record['token'])
+            print('FIXTURE_EVIDENCE ' + json.dumps({'stage': 'compensation-' + stage,
+                'publication': publication, 'operation': operation, 'caller_exit': caller.returncode,
+                'phase': record['phase'], 'owner_preserved': True,
+                'deadline': record['deadline'], 'baseline_restored': True}), flush=True)
+        finally:
+            if caller.poll() is None:
+                os.killpg(caller.pid, signal.SIGKILL)
+                caller.wait(timeout=2)
+            caller.stdout.close()
+            caller.stderr.close()
+
+    def test_compensation_group_kill_before_and_after_active_replace(self):
+        for publication in ['before', 'after']:
+            with self.subTest(publication=publication):
+                self.interrupted_compensation('compensation', publication, 'switch')
+
+    def test_predecessor_rearm_group_kill_keeps_successor_owner(self):
+        self.interrupted_compensation('rearm', 'after', 'switch')
+
+    def test_restore_unlink_failure_compensation_group_kill_preserves_owner(self):
+        for publication in ['before', 'after']:
+            with self.subTest(publication=publication):
+                self.interrupted_compensation('compensation', publication, 'restore')
+
+    def test_disable_compensation_group_kill_preserves_owner(self):
+        self.interrupted_compensation('compensation', 'after', 'disable')
+
+    def test_successful_compensation_rearms_predecessor_without_extending_deadline(self):
+        import json, os
+        from unittest.mock import patch
+        with patch.dict(os.environ, self.env, clear=True), patch.object(backend, 'TRIAL_SECONDS', 1.2):
+            backend.action('grayscale', 'apply')
+            path = next((self.home / 'state').rglob('transaction.json'))
+            old = json.loads(path.read_text())
+            real_save = backend.save
+            failed = [False]
+            def save(directory, record):
+                real_save(directory, record)
+                if record['phase'] == 'active' and not failed[0]:
+                    failed[0] = True
+                    raise OSError('active publication replaced then failed')
+            with patch.object(backend, 'save', save):
+                with self.assertRaisesRegex(ValueError, 'rollback confirmed'):
+                    backend.action('warm', 'apply')
+        record = json.loads(path.read_text())
+        self.assertEqual(record['id'], 'grayscale')
+        self.assertEqual(record['phase'], 'active')
+        self.assertEqual(record['deadline'], old['deadline'])
+        self.assertNotEqual(record['token'], old['token'])
+        self.assertEqual(record['before'], old['before'])
+        self.assertEqual({k: self.values()[k] for k in backend.SCHEMA}, old['expected'])
+        self.assert_timed_recovery(path)
+
+    def test_failed_predecessor_rearm_keeps_current_pending_owner(self):
+        import json, os
+        from unittest.mock import patch
+        with patch.dict(os.environ, self.env, clear=True), patch.object(backend, 'TRIAL_SECONDS', 1.2):
+            backend.action('grayscale', 'apply')
+            path = next((self.home / 'state').rglob('transaction.json'))
+            old = json.loads(path.read_text())
+            real_save, real_start = backend.save, backend.start_watchdog
+            failed, owner = [False], []
+            def save(directory, record):
+                real_save(directory, record)
+                if record['phase'] == 'active' and not failed[0]:
+                    failed[0] = True
+                    owner.append(json.loads(path.read_text()))
+                    raise OSError('active publication replaced then failed')
+            def start(directory, record, preserve_deadline=False):
+                if failed[0]:
+                    raise OSError('predecessor rearm unavailable')
+                return real_start(directory, record, preserve_deadline)
+            with patch.object(backend, 'save', save), patch.object(backend, 'start_watchdog', start):
+                with self.assertRaisesRegex(ValueError, 'retained'):
+                    backend.action('warm', 'apply')
+        record = json.loads(path.read_text())
+        self.assert_timed_recovery(path)
+        self.assertEqual(record['phase'], 'pending')
+        self.assertEqual(record['previous'], old['expected'])
+        for field in ['token', 'deadline', 'watchdog_pid']:
+            self.assertEqual(record[field], owner[0][field])
 
     def test_profiles_never_reenable_disabled_motion(self):
         import json

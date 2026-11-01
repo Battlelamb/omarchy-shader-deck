@@ -297,15 +297,16 @@ def apply_transaction(directory, instance, row_id, current, target, old_record, 
         if restoring:
             (directory / 'transaction.json').unlink()
         else:
-            record['phase'] = 'active'
-            record['previous'] = dict(target)
+            active = dict(record, phase='active', previous=dict(target))
             if not target['decoration.screen_shader']:
-                record = {k: v for k, v in record.items() if k not in ('token', 'deadline', 'watchdog_pid')}
-            save(directory, record)
+                active = {k: v for k, v in active.items() if k not in ('token', 'deadline', 'watchdog_pid')}
+            save(directory, active)
     except (ValueError, OSError, subprocess.SubprocessError) as failure:
         try:
+            # Keep pending values and current watchdog authority durable before compensation.
+            save(directory, record)
             actual = read_values()
-            previous = record['previous'] if record['phase'] == 'pending' else (old_record['expected'] if old_record else record['before'])
+            previous = record['previous']
             # Restore only values this transaction could have written, never a divergent external value.
             for key in reversed(list(target)):
                 if actual[key] != previous[key]:
@@ -328,7 +329,7 @@ def apply_transaction(directory, instance, row_id, current, target, old_record, 
 
 def action(row_id, verb):
     rows = {r['id']: r for r in load_rows()}
-    if row_id not in rows or verb not in ('apply', 'restore', 'confirm'):
+    if (row_id not in rows and (row_id, verb) != ('restore:last', 'restore')) or verb not in ('apply', 'restore', 'confirm'):
         raise ValueError('Unknown preset ID or action; refresh catalogue')
     instance = session()
     directory = state_dir(instance)
@@ -363,6 +364,8 @@ def action(row_id, verb):
         if verb == 'restore':
             if not record:
                 raise ValueError('No snapshot for this session')
+            if row_id == 'restore:last':
+                row_id = record['id']
             target = record['before']
         else:
             target = dict(current)
@@ -434,35 +437,43 @@ def watchdog(token):
         return {'ok': True, 'message': 'Expired watchdog; no changes.'}
     signal.signal(signal.SIGHUP, signal.SIG_IGN)
     ready = directory / ('.ready-' + token)
-    fd = os.open(ready, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
-    with os.fdopen(fd, 'w') as stream:
-        stream.write(str(os.getpid()))
+    fd, temporary = tempfile.mkstemp(prefix='.watchdog-', dir=directory)
+    try:
+        with os.fdopen(fd, 'w') as stream:
+            stream.write(str(os.getpid()))
+        # Exclusive hard-link publication exposes complete PID bytes without replacing another record.
+        os.link(temporary, ready)
+    finally:
+        os.unlink(temporary)
     wait_limit = time.monotonic() + 30
     failures = 0
-    while time.monotonic() < wait_limit:
-        try:
-            with locked(directory):
-                record = load_state(directory, instance)
-                if not record or record.get('token') != token:
-                    return {'ok': True, 'message': 'Superseded watchdog; no changes.'}
-                if record['deadline'] > time.monotonic():
-                    wait_limit = record['deadline'] + 30
-                    raise BusyError('Shader trial has not expired')
-                current = read_values()
-                acceptable = current == record['expected'] or (record['phase'] == 'pending' and all(
-                    current[k] in (record['previous'][k], record['expected'][k]) for k in SCHEMA))
-                if not acceptable:
-                    raise ValueError('External edit prevents timed restore; snapshot retained')
-                apply_transaction(directory, instance, record['id'], current, record['before'], record, True)
-                return {'ok': True, 'message': 'Timed shader restore confirmed.'}
-        except BusyError:
-            time.sleep(0.1)
-        except (ValueError, OSError, subprocess.SubprocessError):
-            failures += 1
-            if failures == 4:
-                raise ValueError('Timed restore could not complete; use explicit Restore after checking IPC and external edits') from None
-            time.sleep(0.2)
-    raise ValueError('Timed restore lock remained busy; snapshot retained for explicit Restore')
+    try:
+        while time.monotonic() < wait_limit:
+            try:
+                with locked(directory):
+                    record = load_state(directory, instance)
+                    if not record or record.get('token') != token:
+                        return {'ok': True, 'message': 'Superseded watchdog; no changes.'}
+                    if record['deadline'] > time.monotonic():
+                        wait_limit = record['deadline'] + 30
+                        raise BusyError('Shader trial has not expired')
+                    current = read_values()
+                    acceptable = current == record['expected'] or (record['phase'] == 'pending' and all(
+                        current[k] in (record['previous'][k], record['expected'][k]) for k in SCHEMA))
+                    if not acceptable:
+                        raise ValueError('External edit prevents timed restore; snapshot retained')
+                    apply_transaction(directory, instance, record['id'], current, record['before'], record, True)
+                    return {'ok': True, 'message': 'Timed shader restore confirmed.'}
+            except BusyError:
+                time.sleep(0.1)
+            except (ValueError, OSError, subprocess.SubprocessError):
+                failures += 1
+                if failures == 4:
+                    raise ValueError('Timed restore could not complete; use explicit Restore after checking IPC and external edits') from None
+                time.sleep(0.2)
+        raise ValueError('Timed restore lock remained busy; snapshot retained for explicit Restore')
+    finally:
+        ready.unlink(missing_ok=True)
 
 
 if __name__ == '__main__':

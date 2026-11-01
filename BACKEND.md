@@ -13,7 +13,7 @@ No catalogue or selection performs an action.
 ```
 /usr/bin/python3 runtime/0.1.0/backend.py catalog
 /usr/bin/python3 runtime/0.1.0/backend.py action --id <known-id> --verb apply --apply
-/usr/bin/python3 runtime/0.1.0/backend.py action --id <any-known-id> --verb restore --apply
+/usr/bin/python3 runtime/0.1.0/backend.py action --id restore:last --verb restore --apply
 ```
 
 `--apply` is mandatory for every user action. Fresh full membership and strict
@@ -46,13 +46,20 @@ values across subsequent presets; no fabricated defaults are used for rollback.
 A pending journal records both pre-transaction and planned values. Every setter
 checks all allowed current values inside compositor Lua; a final readback confirms
 success. Partial mutation or post-mutation persistence failure attempts guarded
-rollback to the immediately previous runtime values. Failed rollback retains the
+rollback to the immediately previous runtime values. Active publication uses a
+separate record, preserving the pending phase and actual pre-transaction values.
+Before any compensating setter, that pending intent must be durably republished,
+even if active replacement succeeded before its acknowledgement failed. If intent
+persistence fails, no compensating setter runs. Failed rollback retains the
 journal. A later explicit Restore can recover interrupted mixed previous/target
 values. Active snapshots require exact expected-value agreement. Divergent
 external edits cause refusal, not silent overwrite. Unrelated keys are untouched.
-Restore accepts any currently known row ID and restores the **first session
-snapshot**, not the selected row's defaults. After successful Restore, snapshot
-is removed and a second Restore honestly reports no snapshot.
+Restore accepts the literal `restore:last` alias or any currently known row ID
+and restores the **first session snapshot**, not the selected row's defaults.
+The alias is valid only with `--verb restore --apply`; Apply/Keep cannot use it.
+It resolves to the saved preset identity after the same bounded receipt, session,
+lock and external-edit checks, without depending on a visible/filtered UI row.
+After successful Restore the snapshot is removed; a second Restore reports no snapshot.
 
 This is value-level optimistic conflict detection, not a global compositor lock:
 ABA edits returning to the same values cannot be distinguished. Restoring values
@@ -86,11 +93,18 @@ The fake `hyprctl` executes actual generated code with system Lua against a fake
 `hl` object and persists observable fake compositor state. It is logic/transport
 fixture evidence, not proof that a real C++ compositor or GPU accepted an effect.
 
-Current suite has **53 tests** (44 original plus 9 ownership/handoff regressions).
-Current hashes, RED/GREEN runs and limits are recorded in
-`release-output/watchdog-ownership-fix/fix-result.json`; the earlier
-`release-output/backend-result.json` and all earlier receipts remain historical,
-unchanged evidence.
+Current suite has **75 tests**. Added regressions cover active-save failure
+before/after replacement, lost compensation acknowledgement, first/timed/confirmed
+previous state, explicit and actual timed recovery, failed pending-intent save
+with no compensation setters, and genuine external-edit refusal. Test-owned
+callers are group-SIGKILLed after real compensation and before predecessor
+republication, including failed clear and Restore removal before/after unlink.
+The rearm checks retain the original deadline and recover after rearm failure.
+RED/GREEN logs, final frozen sources/hashes and hash-matched old-backend negative
+controls are under `release-output/review-r2-1793560487506391914/`. Workspace
+Profiles remains unchanged and passes the supplementary recovery control.
+Earlier receipts remain immutable historical evidence. These runs use
+`env -u PYTHONPATH PATH=/usr/bin /usr/bin/python3 scripts/run-tests.py --backend-only`.
 ## Shader-specific scope and UI integration
 
 Rows: `disable`, `grayscale`, `warm`. Only `decoration.screen_shader` is mutated.
@@ -102,6 +116,12 @@ preserves alpha. This is not a medical/night-light or colour-management tool.
 Applying an effect starts a **15-second trial**. A separate Python process is
 started with `start_new_session=True`, closed inherited streams, a minimal
 session environment, a random token and a readiness handshake BEFORE any setter.
+Readiness is written privately, closed, then published by an exclusive atomic
+hard link: an empty/partial PID record is never announced. Existing wrong-PID or
+symlink records are refused, not overwritten. The caller removes handshake files;
+a late unpublished child also cleans its own record on exit. Hard-killing the
+watchdog itself can still leave a private temporary/ready file; it grants no
+authority without the matching journal token.
 Its saved deadline is monotonic. It is not QML-owned and survives the caller's
 exit or SIGKILL of the caller's entire process group (tested at the real 15s).
 A daemon reaper thread in a still-alive caller only reaps the handle; the child
@@ -118,9 +138,13 @@ readback under the same lock. Confirmation removes the timer token durably and
 retains the original Restore snapshot; it does not create startup persistence.
 Expired/wrong/absent trials fail, never claim success. A failed Keep save rearms
 the original deadline or attempts restoration. Failed switches rearm the previous
-trial without extending its original deadline. Pending Restore, clear and switch
-journals retain the current token, PID and original deadline. Failed timed Restore
-therefore leaves the same watchdog authorized to retry when IPC returns.
+trial without extending its original deadline. Pending Restore and clear journals
+retain the current token, PID and deadline; a pending switch retains predecessor
+authority until a ready successor is published. Compensation preserves that
+current independent owner in the immutable pending intent, including after an
+active replacement or clear retired the on-disk token. It stays actionable while
+the predecessor is rearmed; failed rearming does not strand compensated values.
+Failed timed Restore leaves the same watchdog authorized to retry when IPC returns.
 
 Replacement startup does not publish its new token: the candidate first checks
 the session/state and announces readiness independently. Only then does the
