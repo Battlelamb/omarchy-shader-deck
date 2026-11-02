@@ -1,16 +1,16 @@
-# Shader Deck backend · v0.3.0
+# Shader Deck backend · v0.4.0
 
 ## Commands, fixed effects and intensity
 
 Exact advertised actions: `apply`, `restore`, `confirm` (Keep), `favorite`, `preview`, `compare`. Every nonempty Apply/Preview is a 15-second independent trial. `disable` or intensity zero clears the shader without a trial, retaining explicit Restore. No capture/import/export of arbitrary GLSL or output paths is supported.
 
 ```
-/usr/bin/python3 runtime/0.3.0/backend.py catalog
-/usr/bin/python3 runtime/0.3.0/backend.py preferences --apply --payload '{"options":{"intensity":50}}'
-/usr/bin/python3 runtime/0.3.0/backend.py action --id cool --verb compare --apply
-/usr/bin/python3 runtime/0.3.0/backend.py action --id cool --verb preview --apply
-/usr/bin/python3 runtime/0.3.0/backend.py action --id cool --verb confirm --apply
-/usr/bin/python3 runtime/0.3.0/backend.py action --id restore:last --verb restore --apply
+/usr/bin/python3 runtime/0.4.0/backend.py catalog
+/usr/bin/python3 runtime/0.4.0/backend.py preferences --apply --payload '{"options":{"intensity":50}}'
+/usr/bin/python3 runtime/0.4.0/backend.py action --id cool --verb compare --apply
+/usr/bin/python3 runtime/0.4.0/backend.py action --id cool --verb preview --apply
+/usr/bin/python3 runtime/0.4.0/backend.py action --id cool --verb confirm --apply
+/usr/bin/python3 runtime/0.4.0/backend.py action --id restore:last --verb restore --apply
 ```
 
 The only compositor option is `decoration.screen_shader`. Built-in IDs: `disable`, `grayscale`, `warm`, `cool`, `sepia`, `softcontrast`, `dim`. Preset markers resolve only to those bounded bundled `.frag` files. Shader path strings read for baseline recovery are not an import interface. The `[[EMPTY]]` transport spelling canonicalizes to empty in reads, writes and validated legacy snapshots in memory; legacy receipts are not silently rewritten.
@@ -21,6 +21,28 @@ Preference `intensity` is integer 0–100, default 100. Settings writes do not r
 
 Tests use the real installed offline `glslangValidator` on all fixed shaders and generated strengths 1/50/99/100, with an invalid GLSL negative control. ImageMagick decodes charts for measured pixel assertions; both tools are development-only prerequisites, not runtime dependencies. **Real isolated compositor/GPU rendering remains pending parent qualification**; offline syntax/reference passes are never a GPU pass.
 
+## CPU comparison scene
+
+Saved `comparisonScene` is enum `color-bars` (default) / `grayscale-ramp`.
+Catalogue and Compare resolve the same fixed full-strength reference chart:
+`data/comparisons/<known-shader>.png` for color bars, or
+`data/comparisons/grayscale-ramp/<known-shader>.png` for grayscale input.
+Only fresh bundled shader IDs reach this selector; callers cannot supply paths.
+Compare refuses missing/symlink reference files and performs no compositor IPC
+or writes. Both scenes show original left / fixed 100% transform right, with
+on-image NOT GPU labels. They are CPU reference artwork, never live GPU output,
+current-intensity rendering, HDR or color-management qualification.
+
+Scene configuration does not modify shader source, intensity generation,
+watchdog admission, deadlines, setters or recovery records. Original default
+charts remain byte-identical. Pixel controls use the existing independent
+transform oracle on known grayscale input levels as well as old color samples.
+
+```
+/usr/bin/python3 runtime/0.4.0/backend.py preferences --apply --payload '{"options":{"comparisonScene":"grayscale-ramp"}}'
+/usr/bin/python3 runtime/0.4.0/backend.py action --id cool --verb compare --apply
+```
+
 ## Provider and trust boundary
 
 System `/usr/bin/python3`, Python standard library and installed `hyprctl`; the adapter is qualified for **Hyprland Lua 0.56.2 only** and rejects other versions. Runtime paths derive from `__file__`, never cwd. Each package includes its own runtime helpers; no sibling plugin is required. Native shell code is unsandboxed at runtime; the development runner is not a runtime security sandbox.
@@ -29,14 +51,23 @@ Only `hyprctl -j version`, `hyprctl -j getoption <allowlisted dotted key>` and g
 
 Every write/action requires `--apply`; success is JSON with `ok:true`, failure is nonzero JSON with plain bounded text and no traceback. Unexpected options, inappropriate payloads and invalid membership fail closed. CLI payloads are JSON objects limited to **16384 UTF-8 bytes**; duplicate keys, nonfinite numbers, malformed Unicode and nesting beyond 12 levels are rejected. ID strings never become commands or output paths. Catalogue reads do no IPC or writes and expose fresh rows, `preferences` and `settingsSchema`.
 
+## v0.4.0 display preferences
+
+The exact enum keys are `density` (`comfortable` default, `compact`), `layout`
+(`list` default, `grid`), and `sortOrder` (`default` default, `name`,
+`favorites-first`). They affect native catalogue presentation only. Existing
+stores without these keys receive defaults without an implicit write; Reset
+returns those defaults. The UI owns stable sorting and fresh action admission.
+All settings writes remain local preference operations, never compositor setters.
+
 ## Preferences
 
-`PREFERENCE_SCHEMA` is passed to the local D-owned helper's exact `read`, `change`, `reset`, `toggle`, `remember` APIs. Storage is `${XDG_CONFIG_HOME:-$HOME/.config}/omarchy/lego/<slug>/preferences.json`, outside the installed source. The helper bounds reads, rejects unsafe files/ancestor symlinks, locks updates and uses fsync plus atomic replacement. Corrupt preferences are not silently reset.
+`PREFERENCE_SCHEMA` is passed to the bundled `preferences.py` helper's exact `read`, `change`, `reset`, `toggle`, `remember` APIs. Storage is `${XDG_CONFIG_HOME:-$HOME/.config}/omarchy/lego/<slug>/preferences.json`, outside the installed source. The helper bounds reads, rejects unsafe files/ancestor symlinks, locks updates and uses fsync plus atomic replacement. Corrupt preferences are not silently reset.
 
 ```
-/usr/bin/python3 runtime/0.3.0/backend.py preferences
-/usr/bin/python3 runtime/0.3.0/backend.py preferences --apply --payload '{"reset":true}'
-/usr/bin/python3 runtime/0.3.0/backend.py preferences --apply --payload '{"favorites":["known-id"],"collections":{"Desk":["known-id"]}}'
+/usr/bin/python3 runtime/0.4.0/backend.py preferences
+/usr/bin/python3 runtime/0.4.0/backend.py preferences --apply --payload '{"reset":true}'
+/usr/bin/python3 runtime/0.4.0/backend.py preferences --apply --payload '{"favorites":["known-id"],"collections":{"Desk":["known-id"]}}'
 ```
 
 Reads return `{ok,preferences,settingsSchema,message}`. Patches accept only `options`, `favorites`, `collections`; recent/version cannot be written. Reset is the sole-key `{reset:true}` request and resets **only preferences**, never custom presets, generated effects or transaction journals. Favorites may retain stale IDs inertly; Favorite actions require fresh membership. Recents update only after confirmed Apply/Preview/export. If recent persistence fails after an externally confirmed action, success remains truthful with a warning rather than reporting an invented action failure.
@@ -61,7 +92,7 @@ Run from this checkout, with an existing approved private scratch directory:
 TMPDIR="${TMPDIR:?Set an existing private scratch directory}" env -u PYTHONPATH PATH=/usr/bin /usr/bin/python3 scripts/run-tests.py --backend-only
 ```
 
-The shipped runner uses offline bwrap, unshared network, cleared environment, fresh fake HOME, hidden real HOME and `/run`, no live display/compositor sockets, read-only source/system files and fake IPC. The fake `hyprctl` executes generated Lua with the installed system Lua against an observable fake `hl` object. This proves logic/transport, not C++ compositor/GPU integration. Full native/component gate: `bash test.sh` with the same TMPDIR. Test counts, exact commands, source hashes and immutable RED/GREEN receipts are enumerated in ignored `release-output/v030-result.json`; old validation receipts remain historical rather than overwritten.
+The shipped runner uses offline bwrap, unshared network, cleared environment, fresh fake HOME, hidden real HOME and `/run`, no live display/compositor sockets, read-only source/system files and fake IPC. The fake `hyprctl` executes generated Lua with the installed system Lua against an observable fake `hl` object. This proves logic/transport, not C++ compositor/GPU integration. Full native/component gate: `bash test.sh` with the same TMPDIR. Historical 0.3.0 counts, commands, source hashes and RED/GREEN receipts are held in private ignored `release-output/v030-result.json`, which is not shipped or required by the documented runners; old validation receipts remain historical rather than overwritten.
 
 ## Independent timed preview
 

@@ -17,7 +17,13 @@ SCHEMAS = {
 }
 SCHEMA = SCHEMAS[SLUG] if SLUG != 'TEMPLATE' else {}
 SHADERS = ('grayscale', 'warm', 'cool', 'sepia', 'softcontrast', 'dim')
-PREFERENCE_SCHEMA = {'intensity': {'type': 'integer', 'default': 100, 'minimum': 0, 'maximum': 100, 'label': 'Effect intensity (%)'}}
+PREFERENCE_SCHEMA = {
+    'density': {'type': 'enum', 'default': 'comfortable', 'choices': ['comfortable', 'compact'], 'label': 'Density'},
+    'layout': {'type': 'enum', 'default': 'list', 'choices': ['grid', 'list'], 'label': 'Layout'},
+    'sortOrder': {'type': 'enum', 'default': 'default', 'choices': ['default', 'name', 'favorites-first'], 'label': 'Sort order'},
+    'intensity': {'type': 'integer', 'default': 100, 'minimum': 0, 'maximum': 100, 'label': 'Effect intensity (%)'},
+    'comparisonScene': {'type': 'enum', 'default': 'color-bars', 'choices': ['color-bars', 'grayscale-ramp'], 'label': 'CPU reference scene'},
+}
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import preferences
 
@@ -91,13 +97,20 @@ def load_rows():
     return validate_rows(bounded_json(DATA / 'presets.json'))
 
 
+def comparison_path(row_id, scene):
+    path = DATA / 'comparisons'
+    if scene == 'grayscale-ramp':
+        path = path / 'grayscale-ramp'
+    return path / (row_id + '.png')
+
+
 def catalog():
     prefs = preferences.read(SLUG, PREFERENCE_SCHEMA)
     rows = [dict({k: r[k] for k in ('id', 'label', 'detail')}, favorite=r['id'] in prefs['favorites']) for r in load_rows()]
     for row in rows:
         if row['id'] in SHADERS:
-            row['preview'] = str((DATA / 'comparisons' / (row['id'] + '.png')).resolve())
-            row['detail'] += ' CPU reference comparison at 100%: original left, effect right; not a GPU capture.'
+            row['preview'] = str(comparison_path(row['id'], prefs['options']['comparisonScene']).resolve())
+            row['detail'] += ' CPU reference comparison at 100% (' + prefs['options']['comparisonScene'] + '): original left, effect right; not a GPU capture.'
     return {'rows': rows, 'preferences': prefs, 'settingsSchema': PREFERENCE_SCHEMA,
             'actions': ['apply', 'restore', 'confirm', 'favorite', 'preview', 'compare'], 'actionLabel': 'Apply',
             'message': 'Explicit runtime Apply only; Restore preserves prior values. Not enabled at startup.'}
@@ -394,11 +407,12 @@ def action(row_id, verb):
     if verb == 'favorite' and row_id in rows:
         return {'ok': True, 'message': 'Favorite updated.', 'preferences': preferences.toggle(SLUG, PREFERENCE_SCHEMA, row_id)}
     if verb == 'compare' and row_id in SHADERS and row_id in rows:
-        path = DATA / 'comparisons' / (row_id + '.png')
+        scene = preferences.read(SLUG, PREFERENCE_SCHEMA)['options']['comparisonScene']
+        path = comparison_path(row_id, scene)
         if not path.is_file() or path.is_symlink():
             raise ValueError('Bundled reference comparison is unavailable')
         return {'ok': True, 'message': 'CPU reference only; no compositor setting changed.', 'preview': str(path.resolve()),
-                'detail': '100% effect reference: original left, effect right. Current intensity may differ. This is not a compositor/GPU capture.'}
+                'detail': '100% effect reference (' + scene + '): original left, effect right. Current intensity may differ. This is not a compositor/GPU capture.'}
     if verb == 'preview' and row_id in rows:
         verb = 'apply'  # Every shader Apply is already an independently timed preview.
     if (row_id not in rows and (row_id, verb) != ('restore:last', 'restore')) or verb not in ('apply', 'restore', 'confirm'):

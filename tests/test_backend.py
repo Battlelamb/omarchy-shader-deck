@@ -41,6 +41,27 @@ class BackendTests(unittest.TestCase):
         self.assertEqual(p.stderr, b'', p.stderr)
         return p.returncode, json.loads(p.stdout)
 
+    def confirm_trial(self, row):
+        import time
+        path = next((self.home / 'state').rglob('transaction.json'))
+        receipt = path.read_bytes()
+        assignments = (self.home / 'assignments.jsonl').read_bytes()
+        limit = min(time.monotonic() + 2, json.loads(receipt)['deadline'])
+        while True:
+            calls = (self.home / 'calls.jsonl').read_bytes()
+            code, result = self.cli('action', '--id', row, '--verb', 'confirm', '--apply')
+            if (code, result) != (1, {'ok': False, 'message': 'Another preset action is in progress; retry'}):
+                self.assertEqual(code, 0, result)
+                self.assertTrue(result['ok'], result)
+                return result
+            # Busy is pre-admission, not a failed Keep; no option read, setter or journal write.
+            self.assertEqual(path.read_bytes(), receipt)
+            self.assertEqual((self.home / 'assignments.jsonl').read_bytes(), assignments)
+            delta = (self.home / 'calls.jsonl').read_bytes()[len(calls):]
+            self.assertEqual([json.loads(line) for line in delta.splitlines()], [['-j', 'version']])
+            self.assertLess(time.monotonic(), limit, result)
+            time.sleep(0.01)
+
     def values(self):
         import json
         return json.loads((self.home / 'compositor.json').read_text())
@@ -666,31 +687,119 @@ class BackendTests(unittest.TestCase):
         self.assertFalse((self.home / 'eval-count').exists())
 
     def test_timed_restore_preserves_conflicting_external_shader(self):
-        import subprocess,json,time
-        script = "import runpy; b=runpy.run_path(" + repr(str(RUNTIME / 'backend.py')) + "); b['action'].__globals__['TRIAL_SECONDS']=0.6; b['action']('warm','apply')"
-        p = subprocess.run(['/usr/bin/python3','-c',script],env=self.env,capture_output=True,timeout=5)
-        self.assertEqual(p.returncode,0,p.stderr)
-        external = self.values()
-        external['decoration.screen_shader'] = '/external-owned.frag'
-        (self.home / 'compositor.json').write_text(json.dumps(external))
-        time.sleep(1.6)
-        self.assertEqual(self.values(),external)
-        self.assertTrue(list((self.home / 'state').rglob('transaction.json')))
-        code,result = self.cli('action','--id','warm','--verb','restore','--apply')
-        self.assertNotEqual(code,0)
-        self.assertIn('conflict',result['message'].lower())
+        import contextlib, os, subprocess
+        from unittest.mock import patch
+        real_popen, real_locked = backend.subprocess.Popen, backend.locked
+        children = []
+        def launch(argv, **kwargs):
+            child = real_popen(argv, **kwargs)
+            if 'watchdog' in argv:
+                children.append(child)
+            return child
+        observed = []
+        @contextlib.contextmanager
+        def edit_before_unlock(directory):
+            with real_locked(directory):
+                yield
+                # Publish the external edit while Apply still owns the real flock, even past expiry.
+                self.assertEqual(len(children), 1)
+                recordfile = directory / 'transaction.json'
+                receipt = recordfile.read_bytes()
+                self.assertEqual(json.loads(receipt)['watchdog_pid'], children[0].pid)
+                self.assertIsNone(children[0].poll(), 'watchdog exited before the external edit')
+                count = (self.home / 'eval-count').read_bytes()
+                assignments = (self.home / 'assignments.jsonl').read_bytes()
+                external = self.values()
+                external['decoration.screen_shader'] = '/external-owned.frag'
+                (self.home / 'compositor.json').write_text(json.dumps(external))
+                observed.append((recordfile, receipt, count, assignments, external))
+        try:
+            with patch.dict(os.environ, self.env, clear=True), \
+                 patch.object(backend, 'TRIAL_SECONDS', 0.6), \
+                 patch.object(backend.subprocess, 'Popen', launch), \
+                 patch.object(backend, 'locked', edit_before_unlock):
+                self.assertTrue(backend.action('warm', 'apply')['ok'])
+            child = children[0]
+            recordfile, receipt, count, assignments, external = observed[0]
+            # A fixed delay can race the watchdog's guarded IPC retries under its flock.
+            self.assertEqual(child.wait(timeout=10), 1, 'watchdog did not report failed recovery')
+            self.assertFalse(list(recordfile.parent.glob('.ready-*')))
+            self.assertEqual(self.values(), external)
+            self.assertEqual(recordfile.read_bytes(), receipt)
+            code, result = self.cli('action', '--id', 'warm', '--verb', 'restore', '--apply')
+            self.assertNotEqual(code, 0)
+            self.assertIn('conflict', result['message'].lower())
+            self.assertEqual(self.values(), external)
+            self.assertEqual(recordfile.read_bytes(), receipt)
+            self.assertEqual((self.home / 'eval-count').read_bytes(), count)
+            self.assertEqual((self.home / 'assignments.jsonl').read_bytes(), assignments)
+        finally:
+            for child in children:
+                try:
+                    child.wait(timeout=10)
+                except subprocess.TimeoutExpired:
+                    child.terminate()
+                    try:
+                        child.wait(timeout=1)
+                    except subprocess.TimeoutExpired:
+                        child.kill()
+                        child.wait(timeout=1)
 
     def test_confirm_keeps_only_current_trial_and_preserves_restore(self):
-        import subprocess,time
-        script = "import runpy; b=runpy.run_path(" + repr(str(RUNTIME / 'backend.py')) + "); b['action'].__globals__['TRIAL_SECONDS']=0.9; b['action']('grayscale','apply')"
-        p = subprocess.run(['/usr/bin/python3','-c',script],env=self.env,capture_output=True,timeout=5)
-        self.assertEqual(p.returncode,0,p.stderr)
-        code,result = self.cli('action','--id','grayscale','--verb','confirm','--apply')
-        self.assertEqual(code,0,result)
-        time.sleep(1.5)
-        self.assertTrue(self.values()['decoration.screen_shader'].endswith('grayscale.frag'))
-        self.assertEqual(self.cli('action','--id','grayscale','--verb','restore','--apply')[0],0)
-        self.assertEqual(self.values(),self.original)
+        import os, subprocess, time
+        from unittest.mock import patch
+        real_popen, real_cli = backend.subprocess.Popen, self.cli
+        children, responses = [], []
+        def launch(argv, **kwargs):
+            if 'watchdog' in argv:
+                child = real_popen(['/usr/bin/python3', str(ROOT / 'tests/readiness_watchdog_fixture.py'),
+                                    argv[-1], '0', 'hold-lock'], **kwargs)
+                children.append(child)
+                return child
+            return real_popen(argv, **kwargs)
+        def confirm(*args, **kwargs):
+            try:
+                reply = real_cli(*args, **kwargs)
+                responses.append(reply)
+                return reply
+            finally:
+                (self.home / 'release-watchdog').touch()
+        try:
+            with patch.dict(os.environ, self.env, clear=True), patch.object(backend.subprocess, 'Popen', launch):
+                self.assertTrue(backend.action('cool', 'apply')['ok'])
+            held = self.home / 'watchdog-lock-held'
+            limit = time.monotonic() + 2
+            while not held.exists():
+                self.assertLess(time.monotonic(), limit, 'watchdog never held its real lock')
+                time.sleep(0.002)
+            path = next((self.home / 'state').rglob('transaction.json'))
+            owner = json.loads(path.read_text())
+            self.assertEqual(owner['watchdog_pid'], children[0].pid)
+            self.assertEqual(int(held.read_text()), children[0].pid)
+            with patch.object(self, 'cli', confirm):
+                self.confirm_trial('cool')
+            self.assertEqual(responses[0], (1, {'ok': False, 'message': 'Another preset action is in progress; retry'}))
+            self.assertEqual(responses[-1][0], 0)
+            self.assertEqual(children[0].wait(timeout=2), 0)
+            self.assertNotIn('token', json.loads(path.read_text()))
+            self.assertEqual(self.cli('action', '--id', 'restore:last', '--verb', 'restore', '--apply')[0], 0)
+            self.assertEqual(self.values(), self.original)
+        finally:
+            (self.home / 'stop-watchdog').touch()
+            (self.home / 'release-watchdog').touch()
+            for child in children:
+                try:
+                    child.wait(timeout=2)
+                except subprocess.TimeoutExpired:
+                    child.terminate()
+                    try:
+                        child.wait(timeout=1)
+                    except subprocess.TimeoutExpired:
+                        child.kill()
+                        child.wait(timeout=1)
+                self.assertFalse(pathlib.Path('/proc', str(child.pid)).exists())
+            self.assertFalse(list((self.home / 'state').rglob('.ready-*')))
+            self.assertFalse(list((self.home / 'state').rglob('.watchdog-*')))
 
     def test_confirm_wrong_selected_id_cannot_keep_other_effect(self):
         import subprocess,time
@@ -965,7 +1074,7 @@ class BackendTests(unittest.TestCase):
                     (self.home / 'compositor.json').write_text(json.dumps(self.original))
                 else:
                     self.assertEqual(self.cli('action', '--id', 'cool', '--verb', 'apply', '--apply')[0], 0)
-                    self.assertEqual(self.cli('action', '--id', 'cool', '--verb', 'confirm', '--apply')[0], 0)
+                    self.confirm_trial('cool')
                     generated = pathlib.Path(self.values()['decoration.screen_shader'])
                 clean = generated.read_bytes()
                 edited = clean + b'\n// inactive recovery target edited\n'
@@ -989,7 +1098,7 @@ class BackendTests(unittest.TestCase):
                     expected_setters = 1  # The clean sepia Apply, never the edited cool compensation.
                 else:
                     self.assertEqual(self.cli('action', '--id', 'sepia', '--verb', 'apply', '--apply')[0], 0)
-                    self.assertEqual(self.cli('action', '--id', 'sepia', '--verb', 'confirm', '--apply')[0], 0)
+                    self.confirm_trial('sepia')
                     path = next((self.home / 'state').rglob('transaction.json'))
                     if operation == 'restore-pending':
                         record = json.loads(path.read_text())
@@ -1291,9 +1400,11 @@ class BackendTests(unittest.TestCase):
         with patch.dict(os.environ, self.env, clear=True), patch.object(backend, 'TRIAL_SECONDS', 1.2):
             old = None
             if prior:
-                backend.action('grayscale', 'apply')
+                # Confirmed setup is not an expiry test; only its successor keeps the short lease.
+                with patch.object(backend, 'TRIAL_SECONDS', 15 if prior == 'confirmed' else 1.2):
+                    backend.action('grayscale', 'apply')
                 if prior == 'confirmed':
-                    backend.action('grayscale', 'confirm')
+                    self.confirm_trial('grayscale')
                 old = json.loads(next((self.home / 'state').rglob('transaction.json')).read_text())
             previous = {k: self.values()[k] for k in backend.SCHEMA}
             real_save, real_write = backend.save, backend.write_value

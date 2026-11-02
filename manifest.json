@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "leviathan.shader-deck",
   "name": "Shader Deck",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "author": "Ömer Eren",
   "license": "GPL-3.0-only",
   "description": "Try grayscale or warm screen effects with an independent 15-second rollback. Keep confirms the trial; Restore returns prior values. Effects are explicit and not enabled at startup. Compatible compositor/GPU required. Open: omarchy-shell shell summon leviathan.shader-deck. Type to search; arrows select; Enter acts; Esc closes.",
@@ -11,6 +11,6 @@
   ],
   "keepLoaded": true,
   "entryPoints": {
-    "overlay": "runtime/0.3.0/ShaderDeck.qml"
+    "overlay": "runtime/0.4.0/ShaderDeck.qml"
   }
 }

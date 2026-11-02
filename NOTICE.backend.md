@@ -53,3 +53,13 @@ license SHA-256:
 `93fed46019c38bbe566b479d22148e2e8a1e85ada614accb0211c37b2c61c19b`.
 This notice distinguishes rendered chart artwork from font software; it is not
 a claim to redistribute font outlines or reserved font names.
+
+## v0.4.0 grayscale reference scene
+
+The six `data/comparisons/grayscale-ramp/*.png` compositions are new
+project-authored CPU references, GPL-3.0-only. Input swatches are fixed neutral
+levels 0/64/128/192/255; the right half applies the same fixed full-strength
+transforms. Original/effect and NOT GPU labels are rasterized with the same
+Liberation Sans font described above; no font file or third-party artwork is
+bundled. These are not GPU captures or live-desktop evidence. Existing shader
+and donor attribution is unchanged.

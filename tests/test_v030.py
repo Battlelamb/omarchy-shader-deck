@@ -19,6 +19,7 @@ class AdvancedTests(unittest.TestCase):
     env: dict[str, str]
     setUp = base.BackendTests.setUp
     cli = base.BackendTests.cli
+    confirm_trial = base.BackendTests.confirm_trial
     values = base.BackendTests.values
 
     def test_every_runtime_and_test_python_source_compiles_without_bytecode_writes(self):
@@ -118,7 +119,7 @@ class AdvancedTests(unittest.TestCase):
             caller.stdout.close()
             caller.stderr.close()
         self.assertEqual(self.cli('action', '--id', 'sepia', '--verb', 'preview', '--apply')[0], 0)
-        self.assertEqual(self.cli('action', '--id', 'sepia', '--verb', 'confirm', '--apply')[0], 0)
+        self.confirm_trial('sepia')
         saved = self.values()
         path = next((self.home / 'state').rglob('transaction.json'))
         self.assertNotIn('token', json.loads(path.read_text()))
@@ -129,7 +130,7 @@ class AdvancedTests(unittest.TestCase):
     def test_edited_generated_shader_blocks_restore_without_clobbering(self):
         self.assertEqual(self.cli('preferences', '--apply', '--payload', '{"options":{"intensity":50}}')[0], 0)
         self.assertEqual(self.cli('action', '--id', 'dim', '--verb', 'apply', '--apply')[0], 0)
-        self.assertEqual(self.cli('action', '--id', 'dim', '--verb', 'confirm', '--apply')[0], 0)
+        self.confirm_trial('dim')
         shader = pathlib.Path(self.values()['decoration.screen_shader'])
         original = shader.read_bytes()
         shader.write_bytes(original + b'\n// external edit\n')
