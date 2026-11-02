@@ -1,0 +1,30 @@
+[
+  {
+    "id": "disable",
+    "label": "Disable shader",
+    "detail": "Clear the screen shader immediately; explicit Restore recovers the snapshot.",
+    "settings": {
+      "decoration.screen_shader": ""
+    }
+  },
+  {
+    "id": "grayscale",
+    "label": "Grayscale \u00b7 15 second trial",
+    "detail": "Rec.709 luma, preserves alpha. Reverts in 15 seconds unless Keep effect; GPU qualification pending.",
+    "settings": {
+      "decoration.screen_shader": "@grayscale.frag"
+    }
+  },
+  {
+    "id": "warm",
+    "label": "Readable warm \u00b7 15 second trial",
+    "detail": "Gentle constant green/blue reduction, preserves alpha. Reverts in 15 seconds unless Keep effect.",
+    "settings": {
+      "decoration.screen_shader": "@warm.frag"
+    }
+  },
+  {"id":"cool","label":"Cool","detail":"Gentle blue-biased filter; independent timed rollback.","settings":{"decoration.screen_shader":"@cool.frag"}},
+  {"id":"sepia","label":"Sepia","detail":"Classic three-channel sepia transform; independent timed rollback.","settings":{"decoration.screen_shader":"@sepia.frag"}},
+  {"id":"softcontrast","label":"Soft contrast","detail":"Reduce RGB contrast around mid-gray; independent timed rollback.","settings":{"decoration.screen_shader":"@softcontrast.frag"}},
+  {"id":"dim","label":"Dim","detail":"Reduce RGB brightness, preserving alpha; independent timed rollback.","settings":{"decoration.screen_shader":"@dim.frag"}}
+]
