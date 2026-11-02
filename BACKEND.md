@@ -11,9 +11,9 @@ and session. Missing providers/session and malformed responses fail with JSON.
 No catalogue or selection performs an action.
 
 ```
-/usr/bin/python3 runtime/0.2.0/backend.py catalog
-/usr/bin/python3 runtime/0.2.0/backend.py action --id <known-id> --verb apply --apply
-/usr/bin/python3 runtime/0.2.0/backend.py action --id restore:last --verb restore --apply
+/usr/bin/python3 runtime/0.2.1/backend.py catalog
+/usr/bin/python3 runtime/0.2.1/backend.py action --id <known-id> --verb apply --apply
+/usr/bin/python3 runtime/0.2.1/backend.py action --id restore:last --verb restore --apply
 ```
 
 `--apply` is mandatory for every user action. Fresh full membership and strict
