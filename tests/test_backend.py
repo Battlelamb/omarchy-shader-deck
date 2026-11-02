@@ -2,8 +2,10 @@ import importlib.util
 import pathlib
 import unittest
 
+import json
 ROOT = pathlib.Path(__file__).resolve().parents[1]
-spec = importlib.util.spec_from_file_location("backend", ROOT / "runtime/0.1.0/backend.py")
+RUNTIME = ROOT / pathlib.Path(json.loads((ROOT / 'manifest.json').read_text())['entryPoints']['overlay']).parent
+spec = importlib.util.spec_from_file_location("backend", RUNTIME / "backend.py")
 backend = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(backend)
 
@@ -33,7 +35,7 @@ class BackendTests(unittest.TestCase):
 
     def cli(self, *args, extra=None):
         import subprocess, json
-        p = subprocess.run(['/usr/bin/python3', str(ROOT / 'runtime/0.1.0/backend.py'), *args],
+        p = subprocess.run(['/usr/bin/python3', str(RUNTIME / 'backend.py'), *args],
                            env=dict(self.env, **(extra or {})), capture_output=True, timeout=25)
         self.assertLess(len(p.stdout), 1048576)
         self.assertEqual(p.stderr, b'', p.stderr)
@@ -406,7 +408,7 @@ class BackendTests(unittest.TestCase):
 
     def test_default_watchdog_survives_killed_ui_process_group(self):
         import subprocess, json, time, os, signal
-        script = "import runpy,json,time; b=runpy.run_path(" + repr(str(ROOT / 'runtime/0.1.0/backend.py')) + "); print(json.dumps(b['action']('warm','apply')),flush=True); time.sleep(30)"
+        script = "import runpy,json,time; b=runpy.run_path(" + repr(str(RUNTIME / 'backend.py')) + "); print(json.dumps(b['action']('warm','apply')),flush=True); time.sleep(30)"
         caller = subprocess.Popen(['/usr/bin/python3', '-c', script], env=self.env,
                                   stdout=subprocess.PIPE, stderr=subprocess.PIPE, start_new_session=True)
         try:
@@ -431,7 +433,7 @@ class BackendTests(unittest.TestCase):
 
     def test_shader_switch_does_not_leave_stale_watchdog_authority(self):
         import subprocess, json, time
-        script = "import runpy; b=runpy.run_path(" + repr(str(ROOT / 'runtime/0.1.0/backend.py')) + "); b['action'].__globals__['TRIAL_SECONDS']=0.8; b['action']('grayscale','apply'); b['action']('warm','apply')"
+        script = "import runpy; b=runpy.run_path(" + repr(str(RUNTIME / 'backend.py')) + "); b['action'].__globals__['TRIAL_SECONDS']=0.8; b['action']('grayscale','apply'); b['action']('warm','apply')"
         p = subprocess.run(['/usr/bin/python3','-c',script],env=self.env,capture_output=True,timeout=5)
         self.assertEqual(p.returncode, 0, p.stderr)
         self.assertTrue(self.values()['decoration.screen_shader'].endswith('warm.frag'))
@@ -457,7 +459,7 @@ class BackendTests(unittest.TestCase):
 
     def test_failed_shader_switch_rearms_previous_timed_restore(self):
         import subprocess, time
-        script = "import runpy; b=runpy.run_path(" + repr(str(ROOT / 'runtime/0.1.0/backend.py')) + "); b['action'].__globals__['TRIAL_SECONDS']=0.5; b['action']('grayscale','apply'); b['action'].__globals__['TRIAL_SECONDS']=2;\ntry: b['action']('warm','apply')\nexcept ValueError: pass"
+        script = "import runpy; b=runpy.run_path(" + repr(str(RUNTIME / 'backend.py')) + "); b['action'].__globals__['TRIAL_SECONDS']=0.5; b['action']('grayscale','apply'); b['action'].__globals__['TRIAL_SECONDS']=2;\ntry: b['action']('warm','apply')\nexcept ValueError: pass"
         p = subprocess.run(['/usr/bin/python3','-c',script], env=dict(self.env, FIXTURE_FAIL_AT='2',
                            FIXTURE_FAIL_AFTER='1', FIXTURE_DELAY_FAIL='1.5'), capture_output=True,timeout=6)
         self.assertEqual(p.returncode, 0, p.stderr)
@@ -470,7 +472,7 @@ class BackendTests(unittest.TestCase):
 
     def test_watchdog_recovers_real_caller_crash_mid_transaction(self):
         import subprocess, time
-        script = "import runpy; b=runpy.run_path(" + repr(str(ROOT / 'runtime/0.1.0/backend.py')) + "); b['action'].__globals__['TRIAL_SECONDS']=0.7; b['action']('warm','apply')"
+        script = "import runpy; b=runpy.run_path(" + repr(str(RUNTIME / 'backend.py')) + "); b['action'].__globals__['TRIAL_SECONDS']=0.7; b['action']('warm','apply')"
         p = subprocess.run(['/usr/bin/python3','-c',script], env=dict(self.env,FIXTURE_KILL_CALLER='1'),
                            capture_output=True,timeout=6)
         self.assertEqual(p.returncode, -9)
@@ -577,7 +579,7 @@ class BackendTests(unittest.TestCase):
 
     def test_timed_restore_preserves_conflicting_external_shader(self):
         import subprocess,json,time
-        script = "import runpy; b=runpy.run_path(" + repr(str(ROOT / 'runtime/0.1.0/backend.py')) + "); b['action'].__globals__['TRIAL_SECONDS']=0.6; b['action']('warm','apply')"
+        script = "import runpy; b=runpy.run_path(" + repr(str(RUNTIME / 'backend.py')) + "); b['action'].__globals__['TRIAL_SECONDS']=0.6; b['action']('warm','apply')"
         p = subprocess.run(['/usr/bin/python3','-c',script],env=self.env,capture_output=True,timeout=5)
         self.assertEqual(p.returncode,0,p.stderr)
         external = self.values()
@@ -592,7 +594,7 @@ class BackendTests(unittest.TestCase):
 
     def test_confirm_keeps_only_current_trial_and_preserves_restore(self):
         import subprocess,time
-        script = "import runpy; b=runpy.run_path(" + repr(str(ROOT / 'runtime/0.1.0/backend.py')) + "); b['action'].__globals__['TRIAL_SECONDS']=0.9; b['action']('grayscale','apply')"
+        script = "import runpy; b=runpy.run_path(" + repr(str(RUNTIME / 'backend.py')) + "); b['action'].__globals__['TRIAL_SECONDS']=0.9; b['action']('grayscale','apply')"
         p = subprocess.run(['/usr/bin/python3','-c',script],env=self.env,capture_output=True,timeout=5)
         self.assertEqual(p.returncode,0,p.stderr)
         code,result = self.cli('action','--id','grayscale','--verb','confirm','--apply')
@@ -604,7 +606,7 @@ class BackendTests(unittest.TestCase):
 
     def test_confirm_wrong_selected_id_cannot_keep_other_effect(self):
         import subprocess,time
-        script = "import runpy; b=runpy.run_path(" + repr(str(ROOT / 'runtime/0.1.0/backend.py')) + "); b['action'].__globals__['TRIAL_SECONDS']=0.7; b['action']('grayscale','apply')"
+        script = "import runpy; b=runpy.run_path(" + repr(str(RUNTIME / 'backend.py')) + "); b['action'].__globals__['TRIAL_SECONDS']=0.7; b['action']('grayscale','apply')"
         p = subprocess.run(['/usr/bin/python3','-c',script],env=self.env,capture_output=True,timeout=5)
         self.assertEqual(p.returncode,0,p.stderr)
         code,result = self.cli('action','--id','warm','--verb','confirm','--apply')
@@ -621,7 +623,7 @@ class BackendTests(unittest.TestCase):
 
     def test_watchdog_waits_for_inflight_lock_past_expiry(self):
         import subprocess,time,fcntl
-        script = "import runpy; b=runpy.run_path(" + repr(str(ROOT / 'runtime/0.1.0/backend.py')) + "); b['action'].__globals__['TRIAL_SECONDS']=0.5; b['action']('warm','apply')"
+        script = "import runpy; b=runpy.run_path(" + repr(str(RUNTIME / 'backend.py')) + "); b['action'].__globals__['TRIAL_SECONDS']=0.5; b['action']('warm','apply')"
         p = subprocess.run(['/usr/bin/python3','-c',script],env=self.env,capture_output=True,timeout=5)
         self.assertEqual(p.returncode,0,p.stderr)
         recordfile = next((self.home / 'state').rglob('transaction.json'))
@@ -861,20 +863,20 @@ class BackendTests(unittest.TestCase):
 
     def test_shader_assets_are_fixed_useful_programs(self):
         for name in ['grayscale', 'warm']:
-            path = ROOT / 'runtime/0.1.0/data/shaders' / (name + '.frag')
+            path = RUNTIME / 'data/shaders' / (name + '.frag')
             self.assertTrue(path.is_file(), 'shader asset missing: ' + name)
             source = path.read_text()
             self.assertTrue(source.startswith('#version 300 es'))
             self.assertIn('texture(tex, v_texcoord)', source)
             self.assertIn('pix.a', source)
             self.assertNotIn('#include', source)
-        self.assertIn('0.2126', (ROOT / 'runtime/0.1.0/data/shaders/grayscale.frag').read_text())
-        self.assertIn('0.88', (ROOT / 'runtime/0.1.0/data/shaders/warm.frag').read_text())
+        self.assertIn('0.2126', (RUNTIME / 'data/shaders/grayscale.frag').read_text())
+        self.assertIn('0.88', (RUNTIME / 'data/shaders/warm.frag').read_text())
 
     def test_watchdog_survives_ui_process_exit_and_reverts(self):
         import subprocess, json, time, os
         # Change a Python constant only in the disposable UI caller; no production env bypass.
-        script = "import runpy,json; b=runpy.run_path(" + repr(str(ROOT / 'runtime/0.1.0/backend.py')) + "); b['action'].__globals__['TRIAL_SECONDS']=0.7; print(json.dumps(b['action']('grayscale','apply')))"
+        script = "import runpy,json; b=runpy.run_path(" + repr(str(RUNTIME / 'backend.py')) + "); b['action'].__globals__['TRIAL_SECONDS']=0.7; print(json.dumps(b['action']('grayscale','apply')))"
         caller = subprocess.Popen(['/usr/bin/python3', '-c', script], env=self.env,
                                   stdout=subprocess.PIPE, stderr=subprocess.PIPE, start_new_session=True)
         out, err = caller.communicate(timeout=5)
@@ -1332,7 +1334,7 @@ class BackendTests(unittest.TestCase):
 
     def test_cli_refuses_action_without_explicit_apply(self):
         import subprocess, json
-        p = subprocess.run(["/usr/bin/python3", str(ROOT / "runtime/0.1.0/backend.py"),
+        p = subprocess.run(["/usr/bin/python3", str(RUNTIME / "backend.py"),
                             "action", "--id", "bad", "--verb", "apply"], capture_output=True, timeout=5)
         self.assertNotEqual(p.returncode, 0, "action lacks explicit apply guard")
         self.assertFalse(json.loads(p.stdout)["ok"])

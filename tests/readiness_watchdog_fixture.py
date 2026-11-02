@@ -1,13 +1,14 @@
 #!/usr/bin/python3
 """Slow the real readiness writer before its PID bytes become visible."""
 import importlib.util
+import json
 import os
 from pathlib import Path
 import sys
 import time
 
 root = Path(__file__).resolve().parents[1]
-spec = importlib.util.spec_from_file_location('backend', root / 'runtime/0.1.0/backend.py')
+spec = importlib.util.spec_from_file_location('backend', root / Path(json.loads((root / 'manifest.json').read_text())['entryPoints']['overlay']).parent / 'backend.py')
 backend = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(backend)
 real_fdopen = backend.os.fdopen

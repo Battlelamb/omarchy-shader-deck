@@ -11,9 +11,9 @@ and session. Missing providers/session and malformed responses fail with JSON.
 No catalogue or selection performs an action.
 
 ```
-/usr/bin/python3 runtime/0.1.0/backend.py catalog
-/usr/bin/python3 runtime/0.1.0/backend.py action --id <known-id> --verb apply --apply
-/usr/bin/python3 runtime/0.1.0/backend.py action --id restore:last --verb restore --apply
+/usr/bin/python3 runtime/0.2.0/backend.py catalog
+/usr/bin/python3 runtime/0.2.0/backend.py action --id <known-id> --verb apply --apply
+/usr/bin/python3 runtime/0.2.0/backend.py action --id restore:last --verb restore --apply
 ```
 
 `--apply` is mandatory for every user action. Fresh full membership and strict
@@ -115,7 +115,7 @@ explicit recovery rather than claiming success. No action test touched live IPC.
 Run from this project with an existing approved scratch directory:
 
 ```
-TMPDIR=/home/leviathan/.hermes/cache/scratch env -u PYTHONPATH /usr/bin/python3 scripts/run-tests.py --backend-only
+TMPDIR="${TMPDIR:?Set TMPDIR to an existing private scratch directory}" env -u PYTHONPATH /usr/bin/python3 scripts/run-tests.py --backend-only
 ```
 
 The runner uses offline bwrap, cleared environment, a fresh fake HOME, hidden
