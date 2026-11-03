@@ -1,6 +1,10 @@
 # Shader Deck
 
-## v0.4.0 offline verification
+## v0.4.1 namespace migration
+
+This patch changes public identity and runtime URLs, not backend behavior or storage schemas. Earlier offline/native/live records below apply to their named versions; this patch adds no live-action, GPU or full-shell upgrade/rollback qualification. Current-source checks must be run separately.
+
+## Historical v0.4.0 offline verification
 
 The shipped `env -u PYTHONPATH bash test.sh` completed with **125 Python passes, 1 explicit skips (126 discovered)** and **58 JavaScript component passes**. Its **23 native subprocess/settings cases** and **five native UI modes** also passed: wide, compact, tall-font and light-theme fixtures, with real Save/reopen/Reset readback and strict query-chip/control containment. These overlapping checks are not one aggregate score or real-provider/full-shell evidence.
 
@@ -18,7 +22,7 @@ Runtime inventory SHA-256: `eabc9389f253f2c862f32aa26514aadeb8435761b91a8e90c5ba
 
 The following records describe their original versions and publication/install observations, not newer-candidate coverage.
 
-> **Historical publication checkpoint:** at that checkpoint, the repository exposed the v0.3.0 development source, not a stable release. The runtime was installed for owner-authorized testing and the real panel opened, populated and closed without a shell restart. That observation does not qualify Apply/Restore, full nested upgrade/rollback or the missing Motion curve/speed features. Earlier qualification flags and failed/blocked gates below remain historical evidence, not claims about current repository visibility.
+> **Historical publication checkpoint:** at that checkpoint, the repository exposed the v0.3.0 development source, not a stable release. The runtime was installed for local testing and the real panel opened, populated and closed without a shell restart. That observation does not qualify Apply/Restore, full nested upgrade/rollback or the missing Motion curve/speed features. Earlier qualification flags and failed/blocked gates below remain historical evidence, not claims about current repository visibility.
 
 ## Historical v0.3.0 — UNRELEASED, not release-qualified
 
@@ -26,11 +30,11 @@ This package’s frozen v4 offline `bash test.sh` gate passed **121 Python tests
 
 Independent remediation-closure and membership-optimization reviews passed their named deltas, not feature completeness or release approval. Large-favorites measurements are diagnostic, not universal latency/FPS/resource evidence; the Controller grows by 181 bytes, so this is not debloat.
 
-The all-nine real full-shell old/new/rollback gate is **FAILED_TO_RUN: 0/9 qualified**. Conservative GPU-resource admission blocked launch; the separate device-free compositor attempt failed before shell startup. Existing workloads were left untouched. Offscreen component tests are not a substitute. Motion’s requested subtle/snappy/smooth/expressive curves and speed remain unsupported and incomplete; original acceptance scope is not reduced. All nine candidates remain `qualification_passed: false`.
+The all-nine real full-shell old/new/rollback gate is **FAILED_TO_RUN: 0/9 qualified**. Resource admission blocked launch; the separate device-free compositor attempt failed before shell startup. Existing workloads were left untouched. Offscreen component tests are not a substitute. Motion’s requested subtle/snappy/smooth/expressive curves and speed remain unsupported and incomplete; original acceptance scope is not reduced. All nine candidates remain `qualification_passed: false`.
 
-Separate isolated NVIDIA EGL/GLES fragment-math qualification passed **24/24 cases** across the six static and production-generated effects (RGBA8 error at most one code value, exact alpha). This verifies only fragment math, not Hyprland `screen_shader`, real-shell Preview/Keep/Restore, HDR, monitor color management or deployment. CPU reference images remain CPU references, not GPU screenshots. Full integration is pending.
+Separate isolated EGL/GLES fragment-math qualification passed **24/24 cases** across the six static and production-generated effects (RGBA8 error at most one code value, exact alpha). This verifies only fragment math, not Hyprland `screen_shader`, real-shell Preview/Keep/Restore, HDR, monitor color management or deployment. CPU reference images remain CPU references, not GPU screenshots. Full integration is pending.
 
-**Historical owner-testing status: v0.3.0 was installed for owner-authorized testing, and this development source repository is public. No stable release is claimed.** Hosted CI status is reported by the repository workflow, not established by this local validation record. Any private fixture commits/source archives are offline qualification artifacts, not release commits or install approval. Long-soak/resource, real-shell lifecycle, live lock races and upgrade/rollback remain separate unqualified gates.
+**Historical local-testing status: v0.3.0 was installed for local testing, and this development source repository is public. No stable release is claimed.** Hosted CI status is reported by the repository workflow, not established by this local validation record. Any private fixture commits/source archives are offline qualification artifacts, not release commits or install approval. Long-soak/resource, real-shell lifecycle, live lock races and upgrade/rollback remain separate unqualified gates.
 
 ## Historical v0.2.1 and earlier — not v0.3.0 evidence
 

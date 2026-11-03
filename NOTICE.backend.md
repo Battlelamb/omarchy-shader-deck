@@ -3,8 +3,7 @@
 SPDX-License-Identifier: GPL-3.0-only
 
 Pinned donor: HyDE-Project/HyDE, commit `fa2fd57afc7203b1b5653d3271f3a57ea3873f97`.
-Repository licence: GNU GPL v3; full donor licence is preserved in private source
-evidence and the parent supplies the project LICENSE.
+Repository licence: GNU GPL v3; the full licence is included in `LICENSE`.
 
 grayscale.frag is a reduced fixed Rec.709 mode adapted from the pinned GPL HyDE grayscale.frag, retaining the GLSL sampler/input/output/alpha behavior and luma coefficients. warm.frag is ORIGINAL project code, not a donor asset: it uses fixed channel multipliers. The HyDE blue-light-filter shader points to Hyprland issue commentary, Shadertoy and BlenderArtists provenance; that third-party approximation was inspected but NOT copied, because repository-level GPL alone does not resolve those embedded third-party rights. Selector explicit-set, transactional restore and token invalidation behavior are adapted from the GPL shaders.lua design; the detached watchdog protocol is new Python project code.
 

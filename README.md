@@ -4,7 +4,7 @@
 
 A native Omarchy panel for six fixed screen filters, saved intensity and explicit recovery. Nothing is automatically enabled at startup; no Hyprland startup configuration is rewritten.
 
-> **v0.4.0 source candidate.** This change does not install effects or qualify live Apply/Preview/Keep/Restore. Hyprland screen-shader integration, HDR, monitor color management and the separate full-shell upgrade/rollback gate remain unqualified/blocked. [Validation history](docs/VALIDATION.md).
+> **v0.4.1 source candidate.** This change does not install effects or qualify live Apply/Preview/Keep/Restore. Hyprland screen-shader integration, HDR, monitor color management and the separate full-shell upgrade/rollback gate remain unqualified/blocked. [Validation history](docs/VALIDATION.md).
 
 
 ![Shader Deck 0.4.0 native Browse with illustrative catalogue data](preview.png)
@@ -70,16 +70,20 @@ Favorites, recents and collections are local. Reset clears those preferences and
 
 Preferences live under `${XDG_CONFIG_HOME:-$HOME/.config}/omarchy/lego/shader-deck/`; per-session journals and generated shaders under `${XDG_STATE_HOME:-$HOME/.local/state}/omarchy-shader-deck/`. Generated files are hash-checked before reuse/recovery; edited bytes are preserved as conflicts. [Backend CLI and state contract](BACKEND.md).
 
+## Namespace migration
+
+The plugin ID is now `battlelamb.shader-deck`. Update local menu, binding, enabled-plugin and installed-ID references explicitly; a normal updater cannot implicitly rename a plugin ID. Stable preference, generated-shader and recovery paths are unchanged. Complete any pending trial/Restore before replacing the installed runtime; retain its source and journals until recovery finishes.
+
 ## Open and remove safely
 
 Requires Omarchy Quattro, compatible Quickshell/Qt (`qs.Ui`, `qs.Commons`), Python 3, compatible GPU support and **Hyprland Lua 0.56.2**. Other provider versions fail closed. Each plugin is independent, but runs unsandboxed inside the shell.
 
 ```sh
 omarchy plugin add https://github.com/Battlelamb/omarchy-shader-deck --enable
-omarchy-shell shell summon leviathan.shader-deck
+omarchy-shell shell summon battlelamb.shader-deck
 # Restore in the panel BEFORE disabling or removing:
-omarchy plugin disable leviathan.shader-deck
-omarchy plugin remove leviathan.shader-deck
+omarchy plugin disable battlelamb.shader-deck
+omarchy plugin remove battlelamb.shader-deck
 ```
 
 Install does not apply an effect or add shortcuts. An existing Super+Space → Appearance entry can summon the panel independently.

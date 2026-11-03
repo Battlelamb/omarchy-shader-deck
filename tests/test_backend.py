@@ -1373,7 +1373,7 @@ class BackendTests(unittest.TestCase):
         self.assertFalse(os.environ.get('HYPRLAND_INSTANCE_SIGNATURE'))
         self.assertFalse(os.environ.get('WAYLAND_DISPLAY'))
         self.assertFalse(pathlib.Path('/run/user').exists())
-        self.assertFalse(pathlib.Path('/srv/projects').exists())
+        self.assertFalse(pathlib.Path('/srv').exists())
         devices = pathlib.Path('/proc/net/dev').read_text()
         self.assertNotIn('eth0', devices)
         self.assertNotIn('wlan0', devices)

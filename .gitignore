@@ -1,4 +1,5 @@
 /release-output/
 __pycache__/
 *.pyc
+*.bak
 *.bak-*

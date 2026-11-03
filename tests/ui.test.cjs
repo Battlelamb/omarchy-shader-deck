@@ -46,3 +46,13 @@ test('compact layout does not request the hidden large preview and wide layout r
  ctx.root.selectedRow=null;assert.equal(vm.runInContext(expression,ctx),'');
 });
 test('UI source uses native styling plain text bounded previews and no hidden daemon',()=>{assert.match(src,/textFormat: Text.PlainText/);assert.match(src,/Commons.Color.menu.background/);assert.match(src,/sourceSize.width/);assert.match(src,/Controller.imageUrl/);assert.doesNotMatch(src,/execDetached|AutoText|http[s]?:\/\//);});
+test('public identity, native namespace and runtime revision stay synchronized',()=>{
+ const m=require('../manifest.json'),root=path.resolve(__dirname,'..');
+ const slug=path.basename(file,'.qml').replace(/([a-z])([A-Z])/g,'$1-$2').toLowerCase();
+ assert.equal(m.id,'battlelamb.'+slug);assert.equal(m.author,'Battlelamb');
+ assert.equal(m.version,'0.4.1');
+ assert.equal(m.entryPoints.overlay,'runtime/'+m.version+'/'+path.basename(file));
+ assert.deepEqual(fs.readdirSync(path.join(root,'runtime')),[m.version]);
+ assert.equal(vm.runInNewContext(get('featureRevision')+';featureRevision()'),m.version);
+ assert.equal(src.match(/WlrLayershell.namespace: "([^"]+)"/)[1],m.id.replace('.', '-'));
+});

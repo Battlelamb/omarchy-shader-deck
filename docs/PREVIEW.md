@@ -1,8 +1,10 @@
 # Public native preview provenance
 
-## Current 0.4.0 Browse and Configure
+## Retained 0.4.0 Browse and Configure
 
-`preview.png` and `configure-preview.png` are real native Qt/Quickshell component renders of this version, with outside Illustrative/version/no-actions captions. They are not live desktop/library captures or action confirmations.
+The 0.4.1 namespace patch retains these 0.4.0 images and their original source hashes; no new capture or action qualification is implied.
+
+`preview.png` and `configure-preview.png` are real native Qt/Quickshell component renders of 0.4.0, with outside Illustrative/version/no-actions captions. They are not live desktop/library captures or action confirmations.
 
 The private offline renderer adapts OverlayWindow to an offscreen FloatingWindow, omits layer-shell/output plumbing, and substitutes the lock probe. Native layouts, Ui/Commons tokens, controls, Controller and Settings are actual candidate code. Configure reads the real bounded schema/defaults in a fake HOME; no Save, Reset, clipboard or desktop action is exercised. The box clears the environment, isolates network/PIDs/mounts, exposes no host sockets, masks providers and uses software Qt.
 

@@ -1,14 +1,18 @@
 #!/usr/bin/env python3
 from pathlib import Path
-import json
+import json,re
 r=Path(__file__).resolve().parents[1]
 m=json.loads((r/'manifest.json').read_text())
-assert m['schemaVersion']==1 and m['version']=='0.4.0','Stale release version'
-assert m['id'].startswith('leviathan.') and m['kinds']==['overlay']
+assert m['schemaVersion']==1 and m['version']=='0.4.1','Stale release version'
+slug=re.sub(r'([a-z])([A-Z])',r'\1-\2',Path(m['entryPoints']['overlay']).stem).lower()
+assert m['id']=='battlelamb.'+slug and m['author']=='Battlelamb' and m['kinds']==['overlay'],'Public plugin identity mismatch'
 assert m.get('keepLoaded') is True,'Keep helper ownership across native host hide/unload'
 runtime=Path('runtime')/m['version'];entry=Path(m['entryPoints']['overlay'])
 assert entry.parent==runtime and entry.suffix=='.qml' and (r/entry).is_file(),'Entry must be a direct sibling of its versioned runtime'
 assert sorted(p.name for p in (r/'runtime').iterdir())==[m['version']],'Stale or duplicate runtime'
+source=(r/entry).read_text()
+assert 'WlrLayershell.namespace: '+json.dumps(m['id'].replace('.', '-')) in source,'Native namespace mismatch'
+assert "function featureRevision() { return '"+m['version']+"'; }" in source,'Runtime revision mismatch'
 assert len(m['description'])<=500
 for f in [runtime/'backend.py',runtime/'preferences.py',runtime/'Settings.qml',runtime/'Controller.js',runtime/'BoundedProcess.qml',runtime/'i18n/en.json','README.md','LICENSE','NOTICE.md','NOTICE.backend.md','BACKEND.md','tests/test_backend.py','tests/controller.test.cjs','tests/ui.test.cjs','tests/runner.test.cjs','tests/test_shared_preferences.py','tests/preferences-ui.test.cjs','tests/display-preferences.test.cjs','tests/shared_paths.py','tests/shared-paths.cjs','tests/panel-functions.cjs','tests/native-settings.py','tests/native-panels.py','tests/shared-packaging.py']:
  assert (r/f).is_file(),f

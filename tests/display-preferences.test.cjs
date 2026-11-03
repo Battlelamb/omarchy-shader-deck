@@ -29,7 +29,7 @@ test('panel consumes density and both layouts for galleries and presets without 
   assert.equal(binding('dense',root),true);
  }
  assert.match(src,/Controller.primaryVerb\(actions, root.settingsSchema.primaryAction \? root.preferences.options : null\)/);
- assert.match(src,/function featureRevision\(\) \{ return '0.4.0'; \}/);
+ assert.equal(vm.runInNewContext(getFunction(src,'featureRevision')+';featureRevision()'),require('../manifest.json').version);
  for(const verb of ['copy-unicode','copy-app-id','copy-css'])assert.ok(JSON.parse(fs.readFileSync(path.join(paths.runtime,'i18n/en.json'),'utf8'))[verb]);
  assert.match(src,/text:strings.t\(modelData\)/);
 });

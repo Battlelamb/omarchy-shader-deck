@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.4.1 — namespace and current-source privacy cleanup
+
+- Use the public `battlelamb.*` plugin namespace and Battlelamb author identity.
+- Advance the versioned runtime without changing backend actions, schemas, preferences or recovery storage.
+- Update current instructions and package guards; retain published history and earlier preview provenance.
+
 ## 0.4.0 — development/testing source snapshot
 
 - Choose color bars or grayscale ramps for explicitly CPU-generated reference comparisons, independent of live shader application.
